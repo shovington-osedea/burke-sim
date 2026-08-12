@@ -1,254 +1,283 @@
-# Milestone 1 Implementation Plan: Keyboard-Controlled Robot Base
+# Milestone 2 Implementation Plan: Primitive 6-DOF Arm
 
 ## Objective
 
-Create the smallest useful Burk-e Gazebo simulation:
+Add the smallest useful articulated arm to the existing Burk-e simulation:
 
-- an empty world with a ground plane and light;
-- a simplified MiR1350-style differential-drive base;
-- ROS 2 velocity commands on `/cmd_vel`;
-- keyboard teleoperation; and
-- odometry plus a headless motion smoke test.
+- one primitive 6-DOF serial arm mounted directly on top of the current mobile
+  platform;
+- six revolute joints represented with simple cylinder geometry;
+- no end-effector, tool, payload, sensors, or lift;
+- one ROS 2 position-command topic per arm joint; and
+- joint-state feedback sufficient to verify commanded motion.
 
-This milestone is complete when a developer can launch the simulation, drive
-the base with the keyboard, stop it predictably, and verify basic movement with
-an automated test.
+This milestone is complete when a developer can launch the existing mobile
+base with the arm attached, command every arm joint independently from ROS 2,
+observe bounded motion in Gazebo, and confirm that base driving still works.
 
-## Technical Baseline
+## Existing Baseline
 
-Use this baseline unless the project owner explicitly changes it:
+Agents must extend the repository as it exists at the start of this milestone:
 
-- Ubuntu 24.04 as the execution environment.
-- ROS 2 Jazzy.
-- Gazebo Harmonic.
-- `colcon` with `ament_cmake` ROS packages.
-- `ros_gz_sim` to launch and spawn models.
-- `ros_gz_bridge` for ROS–Gazebo topics.
-- `robot_state_publisher` and Xacro for the robot description.
-- Gazebo's differential-drive system for base motion.
-- `teleop_twist_keyboard` for manual control.
+- Ubuntu 24.04, ROS 2 Jazzy, and Gazebo Harmonic remain the supported runtime.
+- `burke_description/urdf/burke_base.urdf.xacro` owns the current primitive
+  mobile-base model and its Gazebo differential-drive system.
+- `burke_gazebo/launch/base_sim.launch.py` expands and spawns that Xacro model.
+- `burke_gazebo/config/bridge.yaml` bridges `/cmd_vel`, `/odom`, `/tf`, and
+  `/clock`.
+- The current robot model is spawned with the fixed name `burke_base`.
+- The platform top is the top face of `base_link`; no separate top deck or
+  LiftKit has been modeled yet.
 
-The repository host may be macOS, but the supported simulation environment for
-this milestone is Ubuntu 24.04. Use a Linux VM or an approved container setup
-when Ubuntu is not the host. Do not add a separate native-macOS architecture.
+Do not replace the working base, drive controller, launch flow, or bridge
+configuration. Extend them with the arm.
 
 ## Scope Boundaries
 
 In scope:
 
-- Reproducible ROS/Gazebo environment.
-- Empty Gazebo world.
-- Primitive-geometry mobile base.
-- Two driven wheels and passive supports.
-- `/cmd_vel`, `/odom`, TF, keyboard teleoperation, and smoke testing.
+- A fixed mounting frame on the top centre of `base_link`.
+- A serial chain containing exactly six bounded revolute joints.
+- Primitive cylinder visual and collision geometry for the arm.
+- Simple, non-zero inertial properties on every movable link.
+- Gazebo-native position control for each joint.
+- Six scalar ROS command topics and one joint-state feedback topic.
+- A headless integration test and concise operator documentation.
 
 Out of scope:
 
-- LiftKit, UR8L, payload, cameras, or other sensors.
-- Aircraft model and inspection behavior.
-- Nav2, SLAM, localization, or autonomous planning.
-- Detailed MiR visual meshes.
-- Real-device APIs, credentials, networking, or safety behavior.
-- A custom base controller when Gazebo's differential-drive system is enough.
+- UR8L vendor meshes or claims of dimensional accuracy.
+- A LiftKit, top-deck enclosure, tool flange attachment, end-effector, payload,
+  camera, light, or inspection sensor.
+- Inverse kinematics, MoveIt, motion planning, trajectory interpolation, or
+  coordinated multi-joint commands.
+- `ros2_control`, controller manager, a custom controller node, or custom
+  Gazebo plugins.
+- Self-collision planning, aircraft collision checking, or autonomous motion.
+- Changes to differential-drive behavior or its public topics.
+- Real hardware interfaces, credentials, private addresses, or vendor APIs.
 
-## Target Repository Layout
+## Minimal Design Contract
 
-Use this structure unless an earlier task establishes an equivalent conventional
-ROS layout:
+### Kinematic structure
+
+Use stable, generic names so the primitive geometry can be replaced later:
 
 ```text
-ros_ws/
-└── src/
-    └── burke-sim/                # This repository
-        ├── AGENTS.md
-        ├── IMPLEMENTATION_PLAN.md
-        ├── README.md
-        ├── compose.yaml          # Only if Task 0 selects a container runtime
-        ├── docker/               # Only if Task 0 selects a container runtime
-        ├── burke_description/
-        │   ├── CMakeLists.txt
-        │   ├── package.xml
-        │   ├── urdf/
-        │   │   ├── burke_base.urdf.xacro
-        │   │   └── components/
-        │   └── rviz/             # Optional; not required for this milestone
-        └── burke_gazebo/
-            ├── CMakeLists.txt
-            ├── package.xml
-            ├── config/
-            │   └── bridge.yaml
-            ├── launch/
-            │   ├── empty_world.launch.py
-            │   └── base_sim.launch.py
-            ├── test/
-            └── worlds/
-                └── empty.sdf
+base_link
+└── arm_mount_joint (fixed)
+    └── arm_mount_link
+        └── arm_joint_1 (revolute, base yaw)
+            └── arm_link_1
+                └── arm_joint_2 (revolute, shoulder pitch)
+                    └── arm_link_2
+                        └── arm_joint_3 (revolute, elbow pitch)
+                            └── arm_link_3
+                                └── arm_joint_4 (revolute, wrist roll)
+                                    └── arm_link_4
+                                        └── arm_joint_5 (revolute, wrist pitch)
+                                            └── arm_link_5
+                                                └── arm_joint_6 (revolute, wrist roll)
+                                                    └── arm_link_6
 ```
 
-Do not create empty placeholder directories. Add a directory only when its task
-adds a real file that belongs there.
+The chain ends at `arm_link_6`. Do not add `tool0`, a flange link, a dummy tool,
+or any payload link in this milestone.
+
+Mount the arm at `x=0`, `y=0` on the top face of `base_link`. Derive the mount
+height from the existing chassis-height Xacro property instead of duplicating
+the numeric height. The arm must remain attached to the base while it drives.
+
+Use the axis sequence below unless Gazebo validation exposes a concrete issue:
+
+| Joint | Purpose | Axis in joint frame |
+| --- | --- | --- |
+| `arm_joint_1` | base yaw | `0 0 1` |
+| `arm_joint_2` | shoulder pitch | `0 1 0` |
+| `arm_joint_3` | elbow pitch | `0 1 0` |
+| `arm_joint_4` | wrist roll | `1 0 0` |
+| `arm_joint_5` | wrist pitch | `0 1 0` |
+| `arm_joint_6` | wrist roll | `1 0 0` |
+
+All dimensions, masses, inertias, joint limits, maximum speeds, and controller
+settings are simulation assumptions. Declare them as named Xacro properties,
+label them accordingly, and choose conservative values that produce a compact,
+stable model. Do not describe them as measured UR8L values. Keep the arm small
+enough that its zero pose does not intersect the mobile base or the ground.
+
+The simplest acceptable geometry is:
+
+- one short cylinder for `arm_mount_link`;
+- one cylinder for each `arm_link_1` through `arm_link_6`;
+- matching cylinder collision geometry; and
+- cylinders positioned so adjacent joint origins form a visibly connected
+  serial chain.
+
+No mesh assets are required. Reuse a single Xacro macro for repeated cylinder
+link definitions and compute each cylinder inertia from its mass, radius, and
+length instead of copying unexplained inertia tensors.
+
+### ROS topic contract
+
+Each topic accepts a target joint angle in radians as
+`std_msgs/msg/Float64`:
+
+| ROS command topic | Controlled joint | Direction |
+| --- | --- | --- |
+| `/arm/joint_1/command` | `arm_joint_1` | ROS to Gazebo |
+| `/arm/joint_2/command` | `arm_joint_2` | ROS to Gazebo |
+| `/arm/joint_3/command` | `arm_joint_3` | ROS to Gazebo |
+| `/arm/joint_4/command` | `arm_joint_4` | ROS to Gazebo |
+| `/arm/joint_5/command` | `arm_joint_5` | ROS to Gazebo |
+| `/arm/joint_6/command` | `arm_joint_6` | ROS to Gazebo |
+
+Expose joint feedback on `/joint_states` as `sensor_msgs/msg/JointState` and
+include all six arm joints. Preserve the existing `/cmd_vel`, `/odom`, `/tf`,
+and `/clock` contracts.
+
+Use one Gazebo Harmonic `JointPositionController` system per arm joint. Give
+each system a model-scoped Gazebo transport subtopic and bridge it to the ROS
+topic above as `gz.msgs.Double`. Prefer the controller's bounded velocity mode
+for this intentionally simple model rather than adding PID tuning work, but
+verify the exact Harmonic plugin parameters in the supported runtime. Add
+Gazebo's native joint-state publisher to the model and bridge its output; do
+not create a custom relay or state publisher.
+
+The command interface is deliberately six independent scalar topics. Do not
+substitute `trajectory_msgs/msg/JointTrajectory` or add an aggregate command
+API in this milestone.
+
+## Target Files
+
+The planned implementation should remain within these files unless validation
+demonstrates a concrete need for another conventional ROS package resource:
+
+```text
+burke_description/
+└── urdf/
+    ├── burke_base.urdf.xacro
+    └── components/
+        └── simple_arm.urdf.xacro
+
+burke_gazebo/
+├── config/
+│   └── bridge.yaml
+├── launch/
+│   └── base_sim.launch.py
+└── test/
+    └── test_arm_topics.py
+
+README.md
+```
+
+Do not create empty placeholder files or directories. The implementation agent
+may keep the arm macro in `burke_base.urdf.xacro` instead of creating
+`components/simple_arm.urdf.xacro` only if doing so is materially simpler and
+the base description remains readable.
 
 ## Rules for Task Agents
 
-Each agent should execute one task at a time.
+Each agent owns one task and must stop at its task boundary.
 
-1. Read `AGENTS.md`, this plan, and all files created by prerequisite tasks.
-2. Confirm every prerequisite task is actually complete; do not rely only on
-   checked boxes.
-3. Limit changes to the task's allowed scope.
-4. Do not add future-milestone functionality.
-5. Use configurable Xacro properties for provisional physical values.
-6. Mark assumed values as simulation assumptions in nearby documentation.
-7. Run every available validation command listed for the task.
-8. If a validation cannot run, report the exact missing dependency or
-   environment condition. Do not claim it passed.
-9. Update the task checkbox only after all acceptance criteria are met.
-10. Leave a concise handoff containing changed files, validation evidence,
-    assumptions, and remaining blockers.
+1. Read `AGENTS.md`, this plan, and every prerequisite task's changed files.
+2. Inspect the working tree before editing and preserve unrelated user changes.
+3. Confirm prerequisites from the files and validation evidence, not only from
+   plan checkboxes.
+4. Keep every provisional physical value configurable and documented as a
+   simulation assumption.
+5. Do not add any item listed as out of scope, even if it would be useful later.
+6. Run all validation listed for the task that the environment supports.
+7. If validation cannot run, report the exact missing dependency or runtime
+   condition; never claim an unexecuted check passed.
+8. Mark only the task's own checkbox complete after all acceptance criteria
+   pass.
+9. Leave a handoff listing changed files, commands run, observed results,
+   assumptions, and blockers.
 
 ## Dependency Order
 
 ```text
-Task 0: Runtime environment
+Task 1: Primitive arm description
     ↓
-Task 1: ROS workspace and packages
+Task 2: Gazebo joint control and ROS bridges
     ↓
-Task 2: Empty Gazebo world
+Task 3: Integration test and operator documentation
     ↓
-Task 3: Simplified robot base
-    ↓
-Task 4: Differential drive and ROS bridge
-    ↓
-Task 5: Keyboard teleoperation and integrated launch
-    ↓
-Task 6: Automated smoke test and usage documentation
+Task 4: Final regression validation
 ```
 
-Do not parallelize Tasks 0–5. Task 6 depends on the integrated behavior from
-all earlier tasks.
+Do not implement Tasks 1–3 in parallel because they update the same robot,
+bridge, and launch contracts. Task 4 is a verification and correction pass,
+not a feature-expansion task.
 
-## Task 0 — Establish the Runtime Environment
+## Task 1 — Add the Primitive Arm Description
 
-- [x] Complete
+- [ ] Complete
 
 ### Goal
 
-Provide a reproducible Ubuntu 24.04 environment containing ROS 2 Jazzy, Gazebo
-Harmonic, and the milestone dependencies.
+Extend the current Xacro robot with a directly mounted, primitive 6-DOF serial
+arm while leaving all Gazebo controllers and bridges unchanged.
 
 ### Allowed Scope
 
-- Root environment documentation.
-- Container/VM support files if required for the chosen Ubuntu runtime.
-- Dependency declarations and setup commands.
-- No ROS packages, world files, or robot models yet.
+- `burke_description/urdf/burke_base.urdf.xacro`
+- `burke_description/urdf/components/simple_arm.urdf.xacro`, if used
+- Description-package install rules only if the new file would otherwise not
+  be installed
+- No Gazebo control systems, bridge entries, launch changes, tests, or README
+  changes
 
-### Required Dependencies
+### Implementation Requirements
 
-- ROS 2 Jazzy desktop or an equivalent package set containing required CLI and
-  message packages.
-- Gazebo Harmonic.
-- `ros_gz`, `xacro`, `robot_state_publisher`, and `teleop_twist_keyboard`.
-- `colcon` build tooling.
-
-### Implementation Notes
-
-- Prefer official binary packages.
-- Pin the chosen ROS distribution and Gazebo release in project documentation.
-- Because keyboard teleoperation requires an interactive terminal, ensure the
-  selected runtime supports interactive `ros2 run` commands.
-- If a container is selected, document how Gazebo's GUI is displayed. A
-  headless-only container is insufficient for the manual milestone demo.
-- Do not depend on host-global shell modifications that are absent in a clean
-  terminal.
-
-### Acceptance Criteria
-
-- A clean supported environment can run `ros2 --help`.
-- `gz sim --versions` or the supported equivalent reports Gazebo Harmonic.
-- ROS can locate `ros_gz_sim`, `ros_gz_bridge`, `xacro`,
-  `robot_state_publisher`, and `teleop_twist_keyboard`.
-- Gazebo can open its GUI in the selected environment.
-- Setup and entry commands are documented in the root `README.md`.
-
-### Validation
-
-```bash
-ros2 pkg prefix ros_gz_sim
-ros2 pkg prefix ros_gz_bridge
-ros2 pkg prefix xacro
-ros2 pkg prefix robot_state_publisher
-ros2 pkg prefix teleop_twist_keyboard
-gz sim --versions
-```
-
-### Handoff
-
-State whether the runtime is a VM, container, or native Ubuntu environment and
-record the exact command used to enter it.
-
-## Task 1 — Scaffold the ROS Workspace
-
-- [x] Complete
-
-### Prerequisite
-
-Task 0.
-
-### Goal
-
-Treat the parent `ros_ws/` directory as the ROS workspace and scaffold this
-repository, already located at `ros_ws/src/burke-sim/`, with separate
-description and simulation packages directly beneath it.
-
-### Allowed Scope
-
-- `burke_description/`
-- `burke_gazebo/`
-- Root build instructions in `README.md`
-- No world content beyond package placeholders required for installation.
-- No robot links, joints, plugins, or controllers.
-
-### Package Responsibilities
-
-`burke_description` owns:
-
-- Xacro/URDF robot descriptions;
-- robot geometry and kinematic frames; and
-- future description assets.
-
-`burke_gazebo` owns:
-
-- worlds;
-- simulation launch files;
-- Gazebo-specific configuration;
-- ROS–Gazebo bridge configuration; and
-- simulation integration tests.
+- Add `arm_mount_link`, its fixed joint, six movable links, and exactly six
+  revolute joints using the names and axes in the design contract.
+- Put the mount on the top centre of `base_link` using the existing chassis
+  dimension properties.
+- Use only cylinder visual and collision primitives for the arm.
+- Give every physical link a positive mass and valid cylinder inertia.
+- Add conservative position, velocity, and effort limits to all six revolute
+  joints.
+- Ensure the zero pose is connected, visible, and free of obvious intersection
+  with the platform and ground.
+- Keep base link names, wheel joints, support joints, and the differential-drive
+  plugin unchanged.
+- Do not add a tool or terminal dummy link.
 
 ### Acceptance Criteria
 
-- Both packages contain valid `package.xml` and `CMakeLists.txt` files.
-- Runtime resources are installed into each package's share directory.
-- A clean workspace builds successfully.
-- Both packages are discoverable after sourcing the workspace.
-- Package dependencies are minimal and explicit.
+- Xacro expands without errors.
+- The expanded URDF contains exactly `arm_joint_1` through `arm_joint_6` as
+  revolute joints.
+- `arm_link_6` is the terminal link and no tool or payload link exists.
+- Every arm link has visual, collision, and inertial elements.
+- All six joints have finite lower and upper position limits and positive
+  velocity and effort limits.
+- Gazebo can spawn the combined base-and-arm model without URDF or inertia
+  errors.
+- The original base frame tree and drive joints remain present.
 
 ### Validation
 
-Run from the workspace root `ros_ws/` (the parent of this repository):
+Run from the ROS workspace root after sourcing ROS 2:
 
 ```bash
-colcon build --symlink-install
+xacro src/burke-sim/burke_description/urdf/burke_base.urdf.xacro > /tmp/burke_with_arm.urdf
+check_urdf /tmp/burke_with_arm.urdf
+colcon build --symlink-install --packages-select burke_description burke_gazebo
 source install/setup.bash
-ros2 pkg prefix burke_description
-ros2 pkg prefix burke_gazebo
+timeout 30s ros2 launch burke_gazebo base_sim.launch.py gui:=false
 ```
+
+If `check_urdf` or `timeout` is unavailable, record that exact limitation and
+perform the equivalent available parse or bounded launch check.
 
 ### Handoff
 
-List the package responsibilities, declared dependencies, and build result.
+Record the chosen provisional dimensions, masses, limits, zero-pose layout,
+and whether the arm macro is separate or inline.
 
-## Task 2 — Launch an Empty Gazebo World
+## Task 2 — Add Topic-Based Joint Control
 
 - [ ] Complete
 
@@ -258,50 +287,67 @@ Task 1.
 
 ### Goal
 
-Launch a deterministic empty Gazebo world through ROS 2.
+Make all six arm joints independently position-controllable from the defined
+ROS topics and publish joint-state feedback without disturbing base control.
 
 ### Allowed Scope
 
-- `burke_gazebo/worlds/empty.sdf`
-- `burke_gazebo/launch/empty_world.launch.py`
-- Package installation rules and focused tests/documentation.
-- No robot spawning.
+- Arm-related Gazebo blocks in the robot Xacro files
+- `burke_gazebo/config/bridge.yaml`
+- Package dependency declarations only when required by the message bridges
+- No geometry redesign, custom node, `ros2_control`, test implementation, or
+  README changes
 
-### World Requirements
+### Implementation Requirements
 
-- Ground plane.
-- Directional light or sun.
-- Earth gravity.
-- Explicit physics engine/update settings.
-- A useful initial GUI camera pose when supported.
-- A stable world name used by later tasks.
+- Add one Gazebo Harmonic `JointPositionController` system for each arm joint.
+- Use the same joint names and ROS topics defined in this plan.
+- Use bounded joint motion; a large target must not bypass the URDF limit or
+  create unbounded speed.
+- Use model-scoped Gazebo transport topics to avoid collisions with future
+  models, while retaining the stable ROS topic names.
+- Add the Gazebo native joint-state publisher and bridge its model-scoped
+  output to `/joint_states` as `sensor_msgs/msg/JointState`.
+- Add six `std_msgs/msg/Float64` to `gz.msgs.Double` bridge entries.
+- Preserve every existing bridge entry exactly unless a verified integration
+  issue requires a minimal correction.
+- Do not add a node that republishes or aggregates commands.
 
 ### Acceptance Criteria
 
-- One ROS launch command starts Gazebo with the correct world.
-- The ground and lighting are visible.
-- The world can pause, resume, reset, and close cleanly.
-- The launch file resolves the installed world path rather than relying on the
-  current working directory.
-- No missing-resource or plugin errors appear during a normal launch.
+- All six ROS command topics are visible after launch with the correct type.
+- Publishing a valid target to any one command topic moves only the intended
+  joint toward that target.
+- `/joint_states` contains all six arm joint names and changing positions.
+- Commands outside a joint's configured range do not drive it beyond its URDF
+  limit.
+- With no new command, the arm remains stable enough for the manual smoke test.
+- `/cmd_vel` still drives the complete platform with the arm attached.
 
 ### Validation
 
-Run after building and sourcing the workspace:
+With `base_sim.launch.py` running headlessly in one terminal, run in another:
 
 ```bash
-ros2 launch burke_gazebo empty_world.launch.py
+ros2 topic list -t
+ros2 topic echo --once /joint_states
+ros2 topic pub --once /arm/joint_1/command std_msgs/msg/Float64 "{data: 0.25}"
+ros2 topic pub --once /arm/joint_2/command std_msgs/msg/Float64 "{data: -0.20}"
+ros2 topic echo --once /joint_states
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.1}}"
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angular: {z: 0.0}}"
 ```
 
-Also run a bounded headless startup if supported by the launch interface. The
-agent must record the exact command because headless flags vary by integration
-version.
+Also command joints 3–6 individually and retain before/after feedback showing
+that each intended joint changed. Use conservative values within the declared
+limits.
 
 ### Handoff
 
-Record the world name, launch command, physics choice, and GUI/headless results.
+Record the final ROS-to-Gazebo topic mapping, controller mode and maximum
+speeds, observed feedback, and any Harmonic-specific parameter choices.
 
-## Task 3 — Model the Simplified MiR1350 Base
+## Task 3 — Add an Arm Smoke Test and Usage Documentation
 
 - [ ] Complete
 
@@ -311,333 +357,126 @@ Task 2.
 
 ### Goal
 
-Spawn a stable, primitive-geometry mobile base with the correct future-facing
-frame and joint structure.
+Make the arm interface repeatably verifiable and document the minimal manual
+workflow for controlling it.
 
 ### Allowed Scope
 
-- `burke_description/urdf/`
-- Description package install rules.
-- A spawn extension to `base_sim.launch.py` or a focused spawn launch file.
-- Description validation tests.
-- No drive plugin or ROS–Gazebo topic bridge.
+- `burke_gazebo/test/test_arm_topics.py`
+- Test registration and test-only dependencies in `burke_gazebo`
+- `README.md`
+- Minimal launch/config corrections only when the test exposes a defect in the
+  Task 2 integration
+- No new robot features, command APIs, geometry, tools, or controllers
 
-### Required Frame and Link Structure
+### Test Requirements
 
-Minimum structure:
+Create the smallest reliable headless integration test supported by the
+repository. It must:
 
-```text
-base_footprint
-└── base_link
-    ├── left_drive_wheel_link
-    ├── right_drive_wheel_link
-    └── passive support links, if modeled as links
-```
+1. launch or connect to the base simulation deterministically;
+2. wait with explicit timeouts for all six command topics and `/joint_states`;
+3. capture the starting joint positions;
+4. command each joint to a small in-limit target, one at a time;
+5. verify the intended joint reaches a documented tolerance before timeout;
+6. verify no arm joint reports a position outside its declared limit;
+7. publish a small `/cmd_vel` command and verify odometry changes; and
+8. publish an explicit zero base command during cleanup.
 
-Use these joint names unless Gazebo integration requires a documented change:
+The test must fail with a useful message when a topic, joint, or simulation
+process is missing. It must not depend on the Gazebo GUI, wall-clock sleeps
+without readiness checks, or real hardware.
 
-- `left_drive_wheel_joint`
-- `right_drive_wheel_joint`
+### Documentation Requirements
 
-### Modeling Requirements
+Update `README.md` so it describes the new milestone rather than claiming the
+repository only implements Milestone 1. Include:
 
-- Use boxes, cylinders, and spheres rather than detailed meshes.
-- Represent the base as a non-holonomic differential-drive platform.
-- Use two driven wheels and enough passive support geometry to keep the chassis
-  stable.
-- Define visual, collision, and inertial properties.
-- Keep wheel radius, wheel separation, chassis dimensions, ground clearance,
-  mass, and caster properties as named Xacro properties.
-- Make the forward direction `+X`, left `+Y`, and up `+Z`.
-- Place `base_footprint` on the ground projection and `base_link` at the
-  physical chassis reference.
-- Choose conservative friction/contact values and document them as simulation
-  assumptions.
+- how to launch the combined base and arm;
+- the six command topics and their `Float64` radians contract;
+- a copy-paste example that commands one joint within its limits;
+- how to inspect `/joint_states`;
+- how to send the arm back to its documented zero pose;
+- a warning that geometry and limits are simulation assumptions; and
+- an explicit statement that there is no tool, trajectory control, or
+  hardware interface yet.
 
 ### Acceptance Criteria
 
-- Xacro expands into valid URDF.
-- Gazebo spawns exactly one base at a named initial pose.
-- The base rests on the ground without falling through, exploding, tipping, or
-  continuously drifting.
-- Wheel joints rotate about the expected axes.
-- `robot_state_publisher` publishes the expected link tree.
-- Collision geometry visibly matches the simplified robot footprint when
-  collision visualization is enabled.
-- Every provisional physical value is centralized and labeled as an
-  assumption.
+- The registered headless test passes in the supported Ubuntu environment.
+- Failure paths have bounded timeouts and actionable messages.
+- The README commands match the implemented topic names and message types.
+- The documented reset sequence sends a zero target to all six joints.
+- Existing base launch and teleoperation instructions remain correct.
 
 ### Validation
 
+Run from the workspace root:
+
 ```bash
-xacro <path-to>/burke_base.urdf.xacro > /tmp/burke_base.urdf
-check_urdf /tmp/burke_base.urdf
-ros2 launch burke_gazebo base_sim.launch.py
-ros2 run tf2_tools view_frames
+colcon build --symlink-install --packages-select burke_description burke_gazebo
+source install/setup.bash
+colcon test --packages-select burke_gazebo --event-handlers console_direct+
+colcon test-result --verbose
 ```
 
-If `check_urdf` or `tf2_tools` is not installed by Task 0, add the corresponding
-runtime dependency or record a justified alternative.
+Also execute the README's launch, one-joint command, joint-state inspection,
+and six-joint reset commands exactly as written.
 
 ### Handoff
 
-Report the link/joint tree, assumed dimensions and inertial values, spawn pose,
-and stability observation duration.
+List the test cases, timeouts and tolerances, validation output, documentation
+changes, and any remaining environment limitation.
 
-## Task 4 — Add Differential Drive and ROS–Gazebo Bridging
-
-- [x] Complete
-
-### Prerequisite
-
-Task 3.
-
-### Goal
-
-Move the base with standard ROS `geometry_msgs/msg/Twist` commands and expose
-odometry to ROS.
-
-### Allowed Scope
-
-- Gazebo differential-drive configuration in the robot description.
-- `burke_gazebo/config/bridge.yaml`
-- Integration launch changes.
-- Focused command/odometry tests.
-- No keyboard teleoperation yet.
-
-### Interface Contract
-
-ROS-facing topics:
-
-- Command input: `/cmd_vel` using `geometry_msgs/msg/Twist`.
-- Odometry output: `/odom` using `nav_msgs/msg/Odometry`.
-- TF output should provide the appropriate `odom` to base transform if the
-  selected differential-drive configuration publishes it.
-
-Gazebo transport topic names may remain model-scoped internally. Hide them
-behind `ros_gz_bridge` so later ROS components use the stable ROS-facing names.
-
-### Configuration Requirements
-
-- Bind the correct left and right wheel joints.
-- Derive wheel radius/diameter and separation from the same description values
-  used by the model; do not create conflicting unexplained copies.
-- Set conservative maximum linear/angular velocity and acceleration values.
-- Configure odometry frequency and frames explicitly.
-- Use reliable command transport where the selected bridge/plugin requires it.
-- Confirm the angular sign convention with a visible test.
-
-### Acceptance Criteria
-
-- A positive `linear.x` command moves the robot forward along its local `+X`.
-- Positive and negative `angular.z` rotate in opposite directions with the
-  expected ROS convention.
-- A zero `Twist` stops commanded motion.
-- `/odom` changes consistently with straight and rotational motion.
-- No command is required on an internal Gazebo topic from the operator side.
-- The base does not exhibit unacceptable wheel slip, chatter, or oscillation
-  during the bounded manual tests.
-
-### Validation
-
-With `base_sim.launch.py` running:
-
-```bash
-ros2 topic info /cmd_vel --verbose
-ros2 topic echo /odom
-ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
-  "{linear: {x: 0.2}, angular: {z: 0.0}}"
-ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
-  "{linear: {x: 0.0}, angular: {z: 0.0}}"
-ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
-  "{linear: {x: 0.0}, angular: {z: 0.4}}"
-ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
-  "{linear: {x: 0.0}, angular: {z: 0.0}}"
-```
-
-The agent may use a short publication rate instead of `--once` if the plugin
-has an intentional command timeout. Record the exact bounded commands used.
-
-### Handoff
-
-Report ROS and Gazebo topic mappings, velocity limits, odometry frames, QoS,
-and the observed straight/rotation results.
-
-## Task 5 — Add Keyboard Teleoperation and Integrated Launch
-
-- [x] Complete
-
-### Prerequisite
-
-Task 4.
-
-### Goal
-
-Provide the complete manual milestone workflow: launch the world and base, then
-drive it from an interactive keyboard terminal.
-
-### Allowed Scope
-
-- `burke_gazebo/launch/base_sim.launch.py`
-- Optional teleoperation parameter/configuration files.
-- Root usage documentation.
-- No custom keyboard node.
-
-### Launch Requirements
-
-The integrated simulation launch should start:
-
-- Gazebo with `empty.sdf`;
-- robot description publication;
-- base spawning; and
-- required ROS–Gazebo bridges.
-
-Run `teleop_twist_keyboard` separately because it needs direct terminal input.
-Remap its output only if the stable ROS-facing command topic differs from
-`/cmd_vel`.
-
-### Acceptance Criteria
-
-- One command launches the complete base simulation.
-- A second documented command starts interactive keyboard control.
-- Keyboard commands drive forward, backward, left, and right.
-- The keyboard stop command stops the robot.
-- Exiting teleoperation is followed by an explicit zero command or another
-  documented mechanism that prevents unintended continued motion.
-- Initial keyboard speed and turn rate are conservative.
-- Relaunching after shutdown does not leave duplicate nodes or models.
-
-### Manual Validation
-
-Terminal 1:
-
-```bash
-ros2 launch burke_gazebo base_sim.launch.py
-```
-
-Terminal 2:
-
-```bash
-ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args \
-  -p speed:=0.2 -p turn:=0.4
-```
-
-If remapping is required, append:
-
-```text
---remap cmd_vel:=/cmd_vel
-```
-
-Validate forward, reverse, left turn, right turn, stop, and clean shutdown.
-
-### Handoff
-
-The integrated launch command is `ros2 launch burke_gazebo base_sim.launch.py`;
-the second-terminal teleoperation command uses `speed:=0.2` and `turn:=0.4`.
-The manual keys exercised by the documented workflow are forward (`i`),
-reverse (`,`), left (`j`), right (`l`), and stop (`k`). After exiting
-teleoperation, operators send an explicit zero `Twist`; `Ctrl-C` in the launch
-terminal then shuts down Gazebo, the spawned model, and bridge processes.
-Keyboard control requires an interactive terminal and the supported Ubuntu
-24.04 / ROS 2 Jazzy runtime.
-
-## Task 6 — Add the Motion Smoke Test and Final Documentation
+## Task 4 — Final Regression Validation
 
 - [ ] Complete
 
 ### Prerequisite
 
-Task 5.
+Tasks 1–3.
 
 ### Goal
 
-Prove base spawning, command bridging, motion, stop behavior, and odometry in a
-repeatable headless test.
+Verify the milestone end to end and correct only defects that prevent its
+documented acceptance criteria from passing.
 
 ### Allowed Scope
 
-- `burke_gazebo/test/`
-- Package test dependencies and CMake registration.
-- Root `README.md` troubleshooting and usage updates.
-- Small corrections to Tasks 2–5 only when required to make their documented
-  interfaces testable.
-
-### Test Scenario
-
-The test must:
-
-1. Start Gazebo headlessly with the empty world.
-2. Spawn the Burk-e base.
-3. Wait for `/cmd_vel` subscription and `/odom` publication with bounded
-   timeouts.
-4. Record the initial odometry pose.
-5. Publish a low forward velocity for a bounded duration.
-6. Publish zero velocity.
-7. Confirm forward displacement exceeds a small tolerance.
-8. Confirm lateral drift and unexpected yaw remain within documented generous
-   simulation tolerances.
-9. Confirm odometry speed settles near zero within a timeout.
-10. Shut down all launched processes cleanly.
-
-Do not assert exact floating-point poses or real MiR performance. The test is a
-simulation integration check, not a hardware-fidelity test.
+- Read the full milestone implementation.
+- Make minimal corrections inside files already touched by Tasks 1–3.
+- No refactor, new capability, higher-level motion interface, or future robot
+  component.
 
 ### Acceptance Criteria
 
-- The headless smoke test passes repeatedly in the supported Ubuntu
-  environment.
-- Every wait and process has a bounded timeout.
-- Failure output distinguishes launch, spawn, bridge, odometry, motion, and
-  stop failures.
-- Root documentation contains setup, build, manual launch, teleoperation,
-  headless test, and common troubleshooting commands.
-- The manual GUI workflow still works after the test is added.
+- A clean build succeeds for both packages.
+- The combined model spawns in headless Gazebo without model/plugin errors.
+- The model has exactly six commanded arm joints and no tool link.
+- Each documented ROS command topic moves the matching joint and no other
+  command mapping is crossed.
+- `/joint_states` reports all six joints.
+- The arm remains mounted while the base translates and rotates.
+- Arm joint limits and speed bounds are respected.
+- Existing `/cmd_vel`, `/odom`, `/tf`, and `/clock` behavior still works.
+- The automated test suite passes.
+- All physical values remain labeled as assumptions.
 
 ### Validation
 
-Run from the workspace root `ros_ws/` (the parent of this repository):
+Run the full Task 3 validation, then perform one GUI demonstration:
 
 ```bash
-colcon build --symlink-install
-source install/setup.bash
-colcon test --packages-select burke_description burke_gazebo \
-  --event-handlers console_direct+
-colcon test-result --verbose
+ros2 launch burke_gazebo base_sim.launch.py
 ```
 
-Then repeat the Task 5 manual GUI test.
+During the demonstration, command all six joints to small distinct in-limit
+angles, drive the base forward and rotate it, stop the base explicitly, and
+return all joints to zero. Inspect Gazebo logs for warnings or errors related
+to the arm model, controller systems, or bridges.
 
 ### Handoff
 
-Report test names, timeouts, movement tolerances, repeat count, full test
-result, and manual regression result.
-
-## Milestone 1 Definition of Done
-
-All of the following must be true:
-
-- [ ] The supported Ubuntu 24.04 environment is reproducible.
-- [ ] ROS 2 Jazzy and Gazebo Harmonic versions are documented.
-- [ ] The ROS workspace builds from a clean shell.
-- [ ] The empty Gazebo world launches in GUI and headless modes.
-- [ ] The simplified Burk-e base spawns and remains physically stable.
-- [ ] `/cmd_vel` controls forward, reverse, and rotational motion.
-- [ ] `/odom` reports movement using documented frames.
-- [ ] Keyboard teleoperation works from a second terminal.
-- [ ] Stop and shutdown behavior are predictable.
-- [ ] The headless motion smoke test passes repeatedly.
-- [ ] All provisional physical values are clearly labeled as assumptions.
-- [ ] No out-of-scope robot subsystems or real-hardware integrations were
-      introduced.
-
-## Deferred Follow-Up Milestones
-
-After Milestone 1, plan these separately:
-
-1. Improve base geometry and motion fidelity.
-2. Add basic obstacle sensing.
-3. Add the LiftKit prismatic structure.
-4. Add the UR8L model and controllers.
-5. Add the inspection payload and simulated sensors.
-6. Add an aircraft model and predefined inspection stations.
-7. Add autonomous station navigation and simplified inspection execution.
+Report the final build and test results, the six observed joint motions, base
+regression results, remaining warnings, and any validation that could not be
+performed. Mark this task complete only when no required work remains.
