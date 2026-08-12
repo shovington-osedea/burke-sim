@@ -1,0 +1,5 @@
+[project-onboarding]
+completed = true
+[features]
+codex_hooks = true
+multi_agent = true
