@@ -4,3 +4,4 @@ install/
 log/
 .env
 *.cpython*
+*.DS_STORE
