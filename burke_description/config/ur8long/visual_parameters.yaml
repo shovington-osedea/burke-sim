@@ -1,0 +1,44 @@
+# Local visual and primitive-collision parameters for the supplied UR8L CAD.
+# The seven STL files are millimetre exports, hence scale 0.001.
+# Link frames follow the official UR8 Long kinematics. Mesh offsets were
+# recovered by rigidly matching the split files to "UR8 Long.stl" at the CAD
+# reference pose [-180, -150, 150, -90, 90, 0] degrees.
+mesh_files:
+  base:
+    path: "cad/stl/UR8L_PART_1_C-2008883.stl"
+    scale: 0.001
+    mesh_offset: {x: 0.0, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0}
+    collision: {shape: cylinder, radius: 0.1261, length: 0.1064, x: -0.01205, y: 0.0, z: 0.0532, roll: 0.0, pitch: 0.0, yaw: 0.0}
+  shoulder:
+    path: "cad/stl/UR8L_PART_2_C-2008884.stl"
+    scale: 0.001
+    mesh_offset: {x: 0.0, y: 0.0, z: 0.0, roll: 1.570796326794897, pitch: 0.0, yaw: -1.570796326794897}
+    collision: {shape: cylinder, radius: 0.11, length: 0.1927, x: 0.0, y: -0.0170, z: -0.0158, roll: 0.0, pitch: 0.0, yaw: 0.0}
+  upper_arm:
+    path: "cad/stl/UR8L_PART_3_C-2008885.stl"
+    scale: 0.001
+    mesh_offset: {x: 0.0, y: 0.0, z: 0.2212, roll: 1.570796326794897, pitch: -1.570796326794897, yaw: 0.0}
+    collision: {shape: cylinder, radius: 0.1122, length: 0.8989, x: -0.44945, y: 0.0, z: 0.20435, roll: 0.0, pitch: 1.570796326794897, yaw: 0.0}
+  forearm:
+    path: "cad/stl/UR8L_PART_4_C-2008886.stl"
+    scale: 0.001
+    mesh_offset: {x: 0.0, y: 0.0, z: 0.0463, roll: 1.570796326794897, pitch: -1.570796326794897, yaw: 0.0}
+    collision: {shape: cylinder, radius: 0.088, length: 0.7149, x: -0.35745, y: 0.0, z: 0.05895, roll: 0.0, pitch: 1.570796326794897, yaw: 0.0}
+  wrist_1:
+    path: "cad/stl/UR8L_PART_5_C-2008887.stl"
+    scale: 0.001
+    mesh_offset: {x: 0.0, y: 0.0, z: -0.00025, roll: 1.570796326794897, pitch: -1.570796326794897, yaw: 0.0}
+    collision: {shape: cylinder, radius: 0.0641, length: 0.09, x: -0.01205, y: 0.0, z: -0.00855, roll: 1.570796326794897, pitch: 0.0, yaw: 0.0}
+  wrist_2:
+    path: "cad/stl/UR8L_PART_6_C-2008888.stl"
+    scale: 0.001
+    mesh_offset: {x: -0.00025, y: 0.1347, z: -0.1361, roll: 0.0, pitch: -1.570796326794897, yaw: 0.0}
+    collision: {shape: cylinder, radius: 0.0641, length: 0.1343, x: -0.00025, y: 0.12525, z: -0.11725, roll: 0.0, pitch: 0.0, yaw: 0.0}
+  wrist_3:
+    path: "cad/stl/UR8L_PART_7_C-2008889.stl"
+    scale: 0.001
+    mesh_offset: {x: -0.00025, y: -0.0011, z: -0.0087, roll: 1.570796326794897, pitch: 0.0, yaw: -1.570796326794897}
+    collision: {shape: cylinder, radius: 0.0512, length: 0.0574, x: -0.00025, y: 0.0214, z: -0.00595, roll: 1.570796326794897, pitch: 0.0, yaw: 0.0}
+
+reference_pose:
+  radians: [-3.141592653589793, -2.617993877991494, 2.617993877991494, -1.570796326794897, 1.570796326794897, 0.0]

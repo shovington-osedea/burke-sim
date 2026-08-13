@@ -9,7 +9,7 @@ install(
 )
 
 install(
-  DIRECTORY urdf
+  DIRECTORY cad config urdf
   DESTINATION share/${PROJECT_NAME}
 )
 

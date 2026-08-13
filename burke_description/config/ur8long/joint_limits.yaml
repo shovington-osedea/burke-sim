@@ -1,0 +1,11 @@
+# Universal Robots UR8 Long public joint limits, converted to radians.
+# Acceleration limits are not publicly available.
+# Source: Universal_Robots_ROS2_Description, rolling commit
+# 89bbe795f38a7ab00fb66fe8831dfff79dc99edf.
+joint_limits:
+  shoulder_pan_joint: {lower: -6.283185307179586, upper: 6.283185307179586, effort: 433.0, velocity: 3.141592653589793}
+  shoulder_lift_joint: {lower: -6.283185307179586, upper: 6.283185307179586, effort: 433.0, velocity: 3.141592653589793}
+  elbow_joint: {lower: -3.141592653589793, upper: 3.141592653589793, effort: 204.0, velocity: 4.188790204786391}
+  wrist_1_joint: {lower: -6.283185307179586, upper: 6.283185307179586, effort: 70.0, velocity: 5.235987755982989}
+  wrist_2_joint: {lower: -6.283185307179586, upper: 6.283185307179586, effort: 70.0, velocity: 5.235987755982989}
+  wrist_3_joint: {lower: -6.283185307179586, upper: 6.283185307179586, effort: 70.0, velocity: 5.235987755982989}

@@ -20,7 +20,7 @@
   <xacro:property name="wheel_mu" value="0.9"/>
   <xacro:property name="wheel_mu2" value="0.9"/>
 
-  <xacro:include filename="$(find burke_description)/urdf/components/simple_arm.urdf.xacro"/>
+  <xacro:include filename="$(find burke_description)/urdf/components/ur8long.urdf.xacro"/>
 
   <!-- Simulation assumptions for the bounded base controller. -->
   <xacro:property name="max_linear_velocity" value="0.5"/>
@@ -109,7 +109,12 @@
   <xacro:support_caster name="front" x="0.38"/>
   <xacro:support_caster name="rear" x="-0.38"/>
 
-  <xacro:simple_arm chassis_height="${chassis_height}"/>
+  <xacro:ur8long_arm
+    chassis_height="${chassis_height}"
+    kinematics_parameters_file="$(find burke_description)/config/ur8long/default_kinematics.yaml"
+    joint_limits_parameters_file="$(find burke_description)/config/ur8long/joint_limits.yaml"
+    physical_parameters_file="$(find burke_description)/config/ur8long/physical_parameters.yaml"
+    visual_parameters_file="$(find burke_description)/config/ur8long/visual_parameters.yaml"/>
 
   <!--
     Gazebo Harmonic's native differential-drive system. The short topic names

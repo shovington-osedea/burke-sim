@@ -1,0 +1,150 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!--
+    UR8 Long arm using Universal Robots' official rolling configuration data.
+    The visual configuration points at the seven locally supplied STL parts;
+    collision geometry remains primitive for stable, inexpensive simulation.
+  -->
+
+  <xacro:macro name="ur8long_arm" params="
+      chassis_height
+      kinematics_parameters_file
+      joint_limits_parameters_file
+      physical_parameters_file
+      visual_parameters_file">
+    <xacro:property name="kinematics_data" value="${xacro.load_yaml(kinematics_parameters_file)['kinematics']}"/>
+    <xacro:property name="limits_data" value="${xacro.load_yaml(joint_limits_parameters_file)['joint_limits']}"/>
+    <xacro:property name="physical_data" value="${xacro.load_yaml(physical_parameters_file)['inertia_parameters']}"/>
+    <xacro:property name="visual_data" value="${xacro.load_yaml(visual_parameters_file)['mesh_files']}"/>
+
+    <xacro:macro name="mesh_visual" params="key">
+      <xacro:property name="entry" value="${visual_data[key]}"/>
+      <xacro:property name="offset" value="${entry['mesh_offset']}"/>
+      <visual>
+        <origin xyz="${offset['x']} ${offset['y']} ${offset['z']}" rpy="${offset['roll']} ${offset['pitch']} ${offset['yaw']}"/>
+        <geometry>
+          <mesh filename="package://burke_description/${entry['path']}" scale="${entry['scale']} ${entry['scale']} ${entry['scale']}"/>
+        </geometry>
+      </visual>
+    </xacro:macro>
+
+    <xacro:macro name="primitive_collision" params="key">
+      <xacro:property name="collision" value="${visual_data[key]['collision']}"/>
+      <collision>
+        <origin xyz="${collision['x']} ${collision['y']} ${collision['z']}" rpy="${collision['roll']} ${collision['pitch']} ${collision['yaw']}"/>
+        <geometry>
+          <cylinder radius="${collision['radius']}" length="${collision['length']}"/>
+        </geometry>
+      </collision>
+    </xacro:macro>
+
+    <xacro:macro name="official_inertial" params="key mass_key cog_key">
+      <xacro:property name="cog" value="${physical_data['center_of_mass'][cog_key]}"/>
+      <xacro:property name="rotation" value="${physical_data['rotation'][key]}"/>
+      <xacro:property name="tensor" value="${physical_data['tensor'][key]}"/>
+      <inertial>
+        <origin xyz="${cog['x']} ${cog['y']} ${cog['z']}" rpy="${rotation['roll']} ${rotation['pitch']} ${rotation['yaw']}"/>
+        <mass value="${physical_data[mass_key]}"/>
+        <inertia ixx="${tensor['ixx']}" ixy="${tensor['ixy']}" ixz="${tensor['ixz']}"
+                 iyy="${tensor['iyy']}" iyz="${tensor['iyz']}" izz="${tensor['izz']}"/>
+      </inertial>
+    </xacro:macro>
+
+    <!-- Fixed UR base body. The upstream source warns that its 4 kg mass may be inaccurate. -->
+    <link name="arm_mount_link">
+      <xacro:mesh_visual key="base"/>
+      <xacro:primitive_collision key="base"/>
+      <xacro:property name="base_radius" value="${physical_data['links']['base']['radius']}"/>
+      <xacro:property name="base_length" value="${physical_data['links']['base']['length']}"/>
+      <xacro:property name="base_mass" value="${physical_data['base_mass']}"/>
+      <inertial>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <mass value="${base_mass}"/>
+        <inertia ixx="${base_mass * (3 * base_radius * base_radius + base_length * base_length) / 12}" ixy="0" ixz="0"
+                 iyy="${base_mass * (3 * base_radius * base_radius + base_length * base_length) / 12}" iyz="0"
+                 izz="${base_mass * base_radius * base_radius / 2}"/>
+      </inertial>
+    </link>
+    <joint name="arm_mount_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="arm_mount_link"/>
+      <origin xyz="0 0 ${chassis_height / 2}" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Canonical UR bodies mapped to the stable Burk-e arm_link_N names. -->
+    <link name="arm_link_1">
+      <xacro:mesh_visual key="shoulder"/>
+      <xacro:primitive_collision key="shoulder"/>
+      <xacro:official_inertial key="shoulder" mass_key="shoulder_mass" cog_key="shoulder_cog"/>
+    </link>
+    <link name="arm_link_2">
+      <xacro:mesh_visual key="upper_arm"/>
+      <xacro:primitive_collision key="upper_arm"/>
+      <xacro:official_inertial key="upper_arm" mass_key="upper_arm_mass" cog_key="upper_arm_cog"/>
+    </link>
+    <link name="arm_link_3">
+      <xacro:mesh_visual key="forearm"/>
+      <xacro:primitive_collision key="forearm"/>
+      <xacro:official_inertial key="forearm" mass_key="forearm_mass" cog_key="forearm_cog"/>
+    </link>
+    <link name="arm_link_4">
+      <xacro:mesh_visual key="wrist_1"/>
+      <xacro:primitive_collision key="wrist_1"/>
+      <xacro:official_inertial key="wrist_1" mass_key="wrist_1_mass" cog_key="wrist_1_cog"/>
+    </link>
+    <link name="arm_link_5">
+      <xacro:mesh_visual key="wrist_2"/>
+      <xacro:primitive_collision key="wrist_2"/>
+      <xacro:official_inertial key="wrist_2" mass_key="wrist_2_mass" cog_key="wrist_2_cog"/>
+    </link>
+    <link name="arm_link_6">
+      <xacro:mesh_visual key="wrist_3"/>
+      <xacro:primitive_collision key="wrist_3"/>
+      <xacro:official_inertial key="wrist_3" mass_key="wrist_3_mass" cog_key="wrist_3_cog"/>
+    </link>
+
+    <xacro:macro name="ur_joint" params="name parent child kinematics_key limits_key">
+      <xacro:property name="pose" value="${kinematics_data[kinematics_key]}"/>
+      <xacro:property name="limit" value="${limits_data[limits_key]}"/>
+      <joint name="${name}" type="revolute">
+        <parent link="${parent}"/>
+        <child link="${child}"/>
+        <origin xyz="${pose['x']} ${pose['y']} ${pose['z']}" rpy="${pose['roll']} ${pose['pitch']} ${pose['yaw']}"/>
+        <axis xyz="0 0 1"/>
+        <limit lower="${limit['lower']}" upper="${limit['upper']}" effort="${limit['effort']}" velocity="${limit['velocity']}"/>
+        <dynamics damping="0.0" friction="0.0"/>
+      </joint>
+    </xacro:macro>
+    <xacro:ur_joint name="arm_joint_1" parent="arm_mount_link" child="arm_link_1" kinematics_key="shoulder" limits_key="shoulder_pan_joint"/>
+    <xacro:ur_joint name="arm_joint_2" parent="arm_link_1" child="arm_link_2" kinematics_key="upper_arm" limits_key="shoulder_lift_joint"/>
+    <xacro:ur_joint name="arm_joint_3" parent="arm_link_2" child="arm_link_3" kinematics_key="forearm" limits_key="elbow_joint"/>
+    <xacro:ur_joint name="arm_joint_4" parent="arm_link_3" child="arm_link_4" kinematics_key="wrist_1" limits_key="wrist_1_joint"/>
+    <xacro:ur_joint name="arm_joint_5" parent="arm_link_4" child="arm_link_5" kinematics_key="wrist_2" limits_key="wrist_2_joint"/>
+    <xacro:ur_joint name="arm_joint_6" parent="arm_link_5" child="arm_link_6" kinematics_key="wrist_3" limits_key="wrist_3_joint"/>
+
+    <xacro:macro name="arm_position_controller" params="joint topic speed">
+      <gazebo>
+        <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+          <joint_name>${joint}</joint_name>
+          <topic>${topic}</topic>
+          <initial_position>0.0</initial_position>
+          <use_velocity_commands>true</use_velocity_commands>
+          <cmd_max>${speed}</cmd_max>
+          <cmd_min>-${speed}</cmd_min>
+        </plugin>
+      </gazebo>
+    </xacro:macro>
+    <xacro:arm_position_controller joint="arm_joint_1" topic="/model/burke_base/arm/joint_1/command" speed="${limits_data['shoulder_pan_joint']['velocity']}"/>
+    <xacro:arm_position_controller joint="arm_joint_2" topic="/model/burke_base/arm/joint_2/command" speed="${limits_data['shoulder_lift_joint']['velocity']}"/>
+    <xacro:arm_position_controller joint="arm_joint_3" topic="/model/burke_base/arm/joint_3/command" speed="${limits_data['elbow_joint']['velocity']}"/>
+    <xacro:arm_position_controller joint="arm_joint_4" topic="/model/burke_base/arm/joint_4/command" speed="${limits_data['wrist_1_joint']['velocity']}"/>
+    <xacro:arm_position_controller joint="arm_joint_5" topic="/model/burke_base/arm/joint_5/command" speed="${limits_data['wrist_2_joint']['velocity']}"/>
+    <xacro:arm_position_controller joint="arm_joint_6" topic="/model/burke_base/arm/joint_6/command" speed="${limits_data['wrist_3_joint']['velocity']}"/>
+
+    <gazebo>
+      <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+        <topic>/model/burke_base/joint_states</topic>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+</robot>

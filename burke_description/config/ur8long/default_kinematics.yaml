@@ -1,0 +1,11 @@
+# Universal Robots UR8 Long default kinematics.
+# Source: Universal_Robots_ROS2_Description, rolling commit
+# 89bbe795f38a7ab00fb66fe8831dfff79dc99edf.
+kinematics:
+  shoulder: {x: 0.0, y: 0.0, z: 0.2186, roll: 0.0, pitch: 0.0, yaw: 0.0}
+  upper_arm: {x: 0.0, y: 0.0, z: 0.0, roll: 1.570796327, pitch: 0.0, yaw: 0.0}
+  forearm: {x: -0.8989, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0}
+  wrist_1: {x: -0.7149, y: 0.0, z: 0.1824, roll: 0.0, pitch: 0.0, yaw: 0.0}
+  wrist_2: {x: 0.0, y: -0.1361, z: 0.0, roll: 1.570796327, pitch: 0.0, yaw: 0.0}
+  wrist_3: {x: 0.0, y: 0.1434, z: 0.0, roll: 1.5707963265897931, pitch: 3.141592653589793, yaw: 3.141592653589793}
+  hash: calib_464256464824449623

@@ -20,17 +20,20 @@ source install/setup.bash
 
 The workspace currently contains:
 
-- `burke_description`, which owns the primitive URDF/Xacro robot description
-  and frames.
+- `burke_description`, which owns the mobile-base and UR8 Long URDF/Xacro
+  descriptions, CAD visuals, parameter files, and frames.
 - `burke_gazebo`, which owns Gazebo worlds, launch files, bridge configuration,
   and simulation tests.
 
-The current milestone adds a compact, primitive six-joint arm directly to the
-mobile base. It is a Gazebo-only integration surface for testing arm motion;
-all arm geometry, masses, limits, and controller speeds are simulation
-assumptions, not measured UR8L values. Its documented zero pose has a vertical
-pedestal, a +X upper arm and forearm, and a compact three-axis wrist; the
-shoulder and elbow are separate pivots rather than a vertically stacked chain.
+The current milestone mounts a six-joint UR8 Long description directly on the
+mobile base. Its nominal kinematics, public joint limits, masses, centres of
+mass, and inertia tensors come from Universal Robots' official ROS 2
+description at the recorded rolling-branch commit. The seven supplied UR8L
+STL parts are visual geometry at a millimetre-to-metre scale of `0.001`;
+inexpensive cylinders
+derived from their bounds remain the collision geometry. The upstream source
+warns that the nominal 4 kg arm-base mass may be inaccurate, and the mounting
+pose on the provisional mobile platform remains a simulation assumption.
 
 ### Empty-world launch
 
@@ -147,10 +150,11 @@ left, and `+Z` up. Its frame tree starts at `base_footprint`, followed by
 front/rear passive support links. The wheel joints are
 `left_drive_wheel_joint` and `right_drive_wheel_joint`.
 
-The dimensions, masses, contact coefficients, drive limits, arm limits, and
-inertial values in `burke_description/urdf` are labeled simulation assumptions
-and are shared by the model's native Gazebo systems. `base_sim.launch.py` starts
-the system and the YAML bridge. The stable
+The primitive base dimensions, contact coefficients, and drive limits remain
+simulation assumptions. Arm kinematics, public limits, and inertial data are
+loaded from `burke_description/config/ur8long`, while its collision cylinders
+and platform mounting transform are simulation approximations.
+`base_sim.launch.py` starts the system and the YAML bridge. The stable
 ROS-facing interfaces are:
 
 - `/cmd_vel`: `geometry_msgs/msg/Twist` (ROS to Gazebo)

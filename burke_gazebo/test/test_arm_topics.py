@@ -1,4 +1,4 @@
-"""Headless smoke test for the primitive arm and mobile base interfaces."""
+"""Headless smoke test for the UR8 Long arm and mobile base interfaces."""
 
 from __future__ import annotations
 
@@ -23,12 +23,12 @@ from std_msgs.msg import Float64
 ARM_JOINTS = tuple(f"arm_joint_{index}" for index in range(1, 7))
 COMMAND_TOPICS = tuple(f"/arm/joint_{index}/command" for index in range(1, 7))
 JOINT_LIMITS = {
-    "arm_joint_1": (-3.14, 3.14),
-    "arm_joint_2": (-1.57, 1.57),
-    "arm_joint_3": (-2.35, 2.35),
-    "arm_joint_4": (-3.14, 3.14),
-    "arm_joint_5": (-1.57, 1.57),
-    "arm_joint_6": (-3.14, 3.14),
+    "arm_joint_1": (-2.0 * math.pi, 2.0 * math.pi),
+    "arm_joint_2": (-2.0 * math.pi, 2.0 * math.pi),
+    "arm_joint_3": (-math.pi, math.pi),
+    "arm_joint_4": (-2.0 * math.pi, 2.0 * math.pi),
+    "arm_joint_5": (-2.0 * math.pi, 2.0 * math.pi),
+    "arm_joint_6": (-2.0 * math.pi, 2.0 * math.pi),
 }
 TARGETS = (0.20, -0.20, 0.18, -0.18, 0.16, -0.16)
 READY_TIMEOUT = 20.0
