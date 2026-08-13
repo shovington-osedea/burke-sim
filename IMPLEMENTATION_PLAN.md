@@ -57,14 +57,14 @@ Use this structure unless an earlier task establishes an equivalent conventional
 ROS layout:
 
 ```text
-burke-sim/
-├── AGENTS.md
-├── IMPLEMENTATION_PLAN.md
-├── README.md
-├── compose.yaml                  # Only if Task 0 selects a container runtime
-├── docker/                       # Only if Task 0 selects a container runtime
-└── ros2_ws/
-    └── src/
+ros_ws/
+└── src/
+    └── burke-sim/                # This repository
+        ├── AGENTS.md
+        ├── IMPLEMENTATION_PLAN.md
+        ├── README.md
+        ├── compose.yaml          # Only if Task 0 selects a container runtime
+        ├── docker/               # Only if Task 0 selects a container runtime
         ├── burke_description/
         │   ├── CMakeLists.txt
         │   ├── package.xml
@@ -129,7 +129,7 @@ all earlier tasks.
 
 ## Task 0 — Establish the Runtime Environment
 
-- [ ] Complete
+- [x] Complete
 
 ### Goal
 
@@ -189,7 +189,7 @@ record the exact command used to enter it.
 
 ## Task 1 — Scaffold the ROS Workspace
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -197,13 +197,14 @@ Task 0.
 
 ### Goal
 
-Create a buildable ROS workspace with separate description and simulation
-packages.
+Treat the parent `ros_ws/` directory as the ROS workspace and scaffold this
+repository, already located at `ros_ws/src/burke-sim/`, with separate
+description and simulation packages directly beneath it.
 
 ### Allowed Scope
 
-- `ros2_ws/src/burke_description/`
-- `ros2_ws/src/burke_gazebo/`
+- `burke_description/`
+- `burke_gazebo/`
 - Root build instructions in `README.md`
 - No world content beyond package placeholders required for installation.
 - No robot links, joints, plugins, or controllers.
@@ -234,7 +235,7 @@ packages.
 
 ### Validation
 
-Run from `ros2_ws/`:
+Run from the workspace root `ros_ws/` (the parent of this repository):
 
 ```bash
 colcon build --symlink-install
@@ -385,7 +386,7 @@ and stability observation duration.
 
 ## Task 4 — Add Differential Drive and ROS–Gazebo Bridging
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -464,7 +465,7 @@ and the observed straight/rotation results.
 
 ## Task 5 — Add Keyboard Teleoperation and Integrated Launch
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -531,8 +532,14 @@ Validate forward, reverse, left turn, right turn, stop, and clean shutdown.
 
 ### Handoff
 
-Report both launch commands, configured speeds, keys exercised, shutdown
-behavior, and any terminal/runtime constraints.
+The integrated launch command is `ros2 launch burke_gazebo base_sim.launch.py`;
+the second-terminal teleoperation command uses `speed:=0.2` and `turn:=0.4`.
+The manual keys exercised by the documented workflow are forward (`i`),
+reverse (`,`), left (`j`), right (`l`), and stop (`k`). After exiting
+teleoperation, operators send an explicit zero `Twist`; `Ctrl-C` in the launch
+terminal then shuts down Gazebo, the spawned model, and bridge processes.
+Keyboard control requires an interactive terminal and the supported Ubuntu
+24.04 / ROS 2 Jazzy runtime.
 
 ## Task 6 — Add the Motion Smoke Test and Final Documentation
 
@@ -588,7 +595,7 @@ simulation integration check, not a hardware-fidelity test.
 
 ### Validation
 
-Run from `ros2_ws/`:
+Run from the workspace root `ros_ws/` (the parent of this repository):
 
 ```bash
 colcon build --symlink-install

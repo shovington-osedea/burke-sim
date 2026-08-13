@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>burke_gazebo</name>
+  <version>0.0.1</version>
+  <description>Gazebo worlds, launch files, bridges, and tests for Burk-e.</description>
+  <maintainer email="maintainers@example.invalid">Burk-e simulation maintainers</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>teleop_twist_keyboard</exec_depend>
+  <exec_depend>burke_description</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

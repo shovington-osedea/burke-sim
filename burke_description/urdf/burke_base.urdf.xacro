@@ -1,0 +1,135 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="burke_base">
+  <!--
+    Simulation assumptions: these provisional dimensions and masses describe
+    a stable, primitive-geometry MiR1350-style base. Keep all tunable physical
+    values here so Gazebo integration can consume the same values later.
+  -->
+  <xacro:property name="chassis_length" value="1.00"/>
+  <xacro:property name="chassis_width" value="0.70"/>
+  <xacro:property name="chassis_height" value="0.22"/>
+  <xacro:property name="chassis_center_z" value="0.23"/>
+  <xacro:property name="chassis_mass" value="45.0"/>
+  <xacro:property name="wheel_radius" value="0.12"/>
+  <xacro:property name="wheel_width" value="0.06"/>
+  <xacro:property name="wheel_separation" value="0.68"/>
+  <xacro:property name="wheel_mass" value="3.0"/>
+  <xacro:property name="caster_radius" value="0.075"/>
+  <xacro:property name="caster_mass" value="1.0"/>
+  <!-- Conservative contact assumptions for the simplified model. -->
+  <xacro:property name="wheel_mu" value="0.9"/>
+  <xacro:property name="wheel_mu2" value="0.9"/>
+
+  <!-- Simulation assumptions for the bounded base controller. -->
+  <xacro:property name="max_linear_velocity" value="0.5"/>
+  <xacro:property name="max_angular_velocity" value="0.8"/>
+  <xacro:property name="max_linear_acceleration" value="0.8"/>
+  <xacro:property name="max_angular_acceleration" value="1.2"/>
+  <xacro:property name="odom_publish_frequency" value="50.0"/>
+
+  <material name="chassis_blue"><color rgba="0.08 0.22 0.42 1.0"/></material>
+  <material name="wheel_black"><color rgba="0.03 0.03 0.03 1.0"/></material>
+  <material name="caster_gray"><color rgba="0.35 0.35 0.35 1.0"/></material>
+
+  <link name="base_footprint"/>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
+      <material name="chassis_blue"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 0"/>
+      <mass value="${chassis_mass}"/>
+      <inertia ixx="3.006" ixy="0" ixz="0" iyy="4.506" iyz="0" izz="6.006"/>
+    </inertial>
+  </link>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${chassis_center_z}"/>
+  </joint>
+
+  <xacro:macro name="drive_wheel" params="side y">
+    <link name="${side}_drive_wheel_link">
+      <visual>
+        <origin rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <material name="wheel_black"/>
+      </visual>
+      <collision>
+        <origin rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
+      <inertial>
+        <mass value="${wheel_mass}"/>
+        <inertia ixx="0.0108" ixy="0" ixz="0" iyy="0.0216" iyz="0" izz="0.0108"/>
+      </inertial>
+    </link>
+    <joint name="${side}_drive_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${side}_drive_wheel_link"/>
+      <origin xyz="0 ${y} ${wheel_radius - chassis_center_z}"/>
+      <axis xyz="0 1 0"/>
+      <limit effort="100" velocity="30"/>
+    </joint>
+    <gazebo reference="${side}_drive_wheel_link">
+      <mu1>${wheel_mu}</mu1>
+      <mu2>${wheel_mu2}</mu2>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:drive_wheel side="left" y="${wheel_separation / 2}"/>
+  <xacro:drive_wheel side="right" y="-${wheel_separation / 2}"/>
+
+  <xacro:macro name="support_caster" params="name x">
+    <link name="${name}_support_link">
+      <visual><geometry><sphere radius="${caster_radius}"/></geometry><material name="caster_gray"/></visual>
+      <collision><geometry><sphere radius="${caster_radius}"/></geometry></collision>
+      <inertial>
+        <mass value="${caster_mass}"/>
+        <inertia ixx="0.00225" ixy="0" ixz="0" iyy="0.00225" iyz="0" izz="0.00225"/>
+      </inertial>
+    </link>
+    <joint name="${name}_support_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="${name}_support_link"/>
+      <origin xyz="${x} 0 ${caster_radius - chassis_center_z}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:support_caster name="front" x="0.38"/>
+  <xacro:support_caster name="rear" x="-0.38"/>
+
+  <!--
+    Gazebo Harmonic's native differential-drive system. The short topic names
+    are resolved in the spawned model namespace (/model/burke_base). The ROS
+    bridge in burke_gazebo maps those internal topics to /cmd_vel, /odom, and
+    /tf. All dimensions below are the properties above, so the plugin cannot
+    silently diverge from the collision geometry.
+  -->
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+      <left_joint>left_drive_wheel_joint</left_joint>
+      <right_joint>right_drive_wheel_joint</right_joint>
+      <wheel_separation>${wheel_separation}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+      <max_linear_velocity>${max_linear_velocity}</max_linear_velocity>
+      <max_angular_velocity>${max_angular_velocity}</max_angular_velocity>
+      <max_linear_acceleration>${max_linear_acceleration}</max_linear_acceleration>
+      <max_angular_acceleration>${max_angular_acceleration}</max_angular_acceleration>
+      <odom_publish_frequency>${odom_publish_frequency}</odom_publish_frequency>
+      <topic>cmd_vel</topic>
+      <odom_topic>odom</odom_topic>
+      <tf_topic>tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+    </plugin>
+  </gazebo>
+</robot>

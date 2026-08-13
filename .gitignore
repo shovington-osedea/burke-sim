@@ -1,2 +1,5 @@
-.codex/tmp/
-.env
+# Colcon build products
+build/
+install/
+log/
+
