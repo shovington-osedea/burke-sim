@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(burke_gazebo)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_pytest REQUIRED)
 
 install(
   FILES package.xml
@@ -11,6 +12,10 @@ install(
 install(
   DIRECTORY config launch worlds
   DESTINATION share/${PROJECT_NAME}
+)
+
+ament_add_pytest_test(test_arm_topics test/test_arm_topics.py
+  TIMEOUT 120
 )
 
 ament_package()

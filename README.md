@@ -1,6 +1,6 @@
 # Burk-e simulation
 
-This repository implements the Milestone 1 simulation environment defined in
+This repository implements the Milestone 2 simulation environment defined in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md): native Ubuntu 24.04
 (Noble), ROS 2 Jazzy, and Gazebo Harmonic. This repository is already checked
 out under the ROS 2 workspace at `ros_ws/src/burke-sim/`.
@@ -24,6 +24,13 @@ The workspace currently contains:
   and frames.
 - `burke_gazebo`, which owns Gazebo worlds, launch files, bridge configuration,
   and simulation tests.
+
+The current milestone adds a compact, primitive six-joint arm directly to the
+mobile base. It is a Gazebo-only integration surface for testing arm motion;
+all arm geometry, masses, limits, and controller speeds are simulation
+assumptions, not measured UR8L values. Its documented zero pose has a vertical
+pedestal, a +X upper arm and forearm, and a compact three-axis wrist; the
+shoulder and elbow are separate pivots rather than a vertically stacked chain.
 
 ### Empty-world launch
 
@@ -84,6 +91,48 @@ For CI or a VM without a display, use Gazebo's supported headless rendering
 options; this validates simulation startup but does not replace the
 interactive GUI demonstration required for the manual milestone.
 
+### Combined base and arm
+
+Launch the headless simulation with the arm attached:
+
+```bash
+ros2 launch burke_gazebo base_sim.launch.py gui:=false
+```
+
+Omit `gui:=false` for the interactive Gazebo view. Each arm command accepts a
+target angle in radians as `std_msgs/msg/Float64`:
+
+| Topic | Joint |
+| --- | --- |
+| `/arm/joint_1/command` | `arm_joint_1` |
+| `/arm/joint_2/command` | `arm_joint_2` |
+| `/arm/joint_3/command` | `arm_joint_3` |
+| `/arm/joint_4/command` | `arm_joint_4` |
+| `/arm/joint_5/command` | `arm_joint_5` |
+| `/arm/joint_6/command` | `arm_joint_6` |
+
+For example, command joint 2 to a small in-limit target and inspect feedback:
+
+```bash
+ros2 topic pub --rate 10 --qos-reliability reliable \
+  /arm/joint_2/command std_msgs/msg/Float64 "{data: -0.20}"
+# Press Ctrl-C after the joint reaches the target.
+ros2 topic echo --once /joint_states
+```
+
+Return the arm to its documented zero pose by sending zero to all six scalar
+topics:
+
+```bash
+for joint in 1 2 3 4 5 6; do
+  ros2 topic pub --once /arm/joint_${joint}/command std_msgs/msg/Float64 "{data: 0.0}"
+done
+```
+
+The arm has no tool, payload, trajectory-control API, inverse kinematics, or
+hardware interface yet. It is intentionally limited to six independent
+Gazebo position commands and `/joint_states` feedback.
+
 ### Base model
 
 Launch the empty world with one primitive-geometry Burk-e base:
@@ -98,10 +147,10 @@ left, and `+Z` up. Its frame tree starts at `base_footprint`, followed by
 front/rear passive support links. The wheel joints are
 `left_drive_wheel_joint` and `right_drive_wheel_joint`.
 
-The dimensions, masses, contact coefficients, drive limits, and inertial values
-in `burke_description/urdf/burke_base.urdf.xacro` are labeled simulation
-assumptions and are shared by the model's native Gazebo differential-drive
-system. `base_sim.launch.py` starts the system and the YAML bridge. The stable
+The dimensions, masses, contact coefficients, drive limits, arm limits, and
+inertial values in `burke_description/urdf` are labeled simulation assumptions
+and are shared by the model's native Gazebo systems. `base_sim.launch.py` starts
+the system and the YAML bridge. The stable
 ROS-facing interfaces are:
 
 - `/cmd_vel`: `geometry_msgs/msg/Twist` (ROS to Gazebo)

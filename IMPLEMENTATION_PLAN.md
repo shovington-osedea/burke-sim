@@ -203,16 +203,18 @@ Task 2: Gazebo joint control and ROS bridges
     ↓
 Task 3: Integration test and operator documentation
     ↓
-Task 4: Final regression validation
+Task 4: Industrial arm kinematic layout
+    ↓
+Task 5: Final regression validation
 ```
 
-Do not implement Tasks 1–3 in parallel because they update the same robot,
-bridge, and launch contracts. Task 4 is a verification and correction pass,
-not a feature-expansion task.
+Do not implement Tasks 1–4 in parallel because they update or validate the
+same robot, bridge, launch, and test contracts. Task 5 is a verification and
+correction pass, not a feature-expansion task.
 
 ## Task 1 — Add the Primitive Arm Description
 
-- [ ] Complete
+- [x] Complete
 
 ### Goal
 
@@ -279,7 +281,7 @@ and whether the arm macro is separate or inline.
 
 ## Task 2 — Add Topic-Based Joint Control
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -428,13 +430,104 @@ and six-joint reset commands exactly as written.
 List the test cases, timeouts and tolerances, validation output, documentation
 changes, and any remaining environment limitation.
 
-## Task 4 — Final Regression Validation
+## Task 4 — Rework the Arm into an Industrial Kinematic Layout
 
 - [ ] Complete
 
 ### Prerequisite
 
-Tasks 1–3.
+Task 3.
+
+### Goal
+
+Replace the vertically stacked arm layout with a useful articulated layout
+that visibly behaves like an industrial 6-DOF arm: base yaw, shoulder pitch,
+elbow pitch, and a three-axis wrist. Keep the existing joint names, ROS topic
+contract, controllers, and primitive-geometry approach.
+
+### Allowed Scope
+
+- `burke_description/urdf/components/simple_arm.urdf.xacro`
+- Arm-specific assertions in `burke_gazebo/test/test_arm_topics.py`
+- `README.md` only where the documented zero pose or arm description changes
+- No bridge, launch, base-drive, command-interface, tool, payload, sensor,
+  MoveIt, trajectory-control, or hardware-interface changes
+
+### Kinematic Requirements
+
+- Keep the existing serial chain and exactly six revolute joints named
+  `arm_joint_1` through `arm_joint_6`.
+- Lay out the chain as recognizable sections: a base/shoulder pedestal, an
+  upper arm, a forearm, and a compact three-joint wrist.
+- Place the shoulder and elbow joint origins at distinct physical pivots. The
+  upper-arm and forearm geometry must span between those pivots instead of all
+  link origins being translated along one vertical line.
+- Orient each cylinder's visual, collision, and inertial origin to follow the
+  segment it represents. Do not use a rotated visual to hide an incorrect
+  kinematic frame.
+- Retain the intended axis sequence: base yaw about `Z`, shoulder and elbow
+  pitch about their local `Y` axes, wrist roll about local `X`, wrist pitch
+  about local `Y`, and final wrist roll about local `X`.
+- Ensure shoulder or elbow motion sweeps the downstream arm through a visible
+  arc, while wrist joints primarily change wrist orientation rather than
+  moving the whole chain around a shared axis.
+- Define separate named Xacro properties for the provisional pedestal,
+  upper-arm, forearm, and wrist dimensions. Continue to label all geometry,
+  mass, inertia, and pose values as simulation assumptions.
+- Choose a compact zero pose that is visibly connected, does not intersect the
+  mobile base or ground, and can be held by the existing controllers.
+- Preserve positive masses, valid inertias, joint limits, damping, and bounded
+  controller speed. Keep each controller's initialized holding target.
+
+### Acceptance Criteria
+
+- Xacro expands and the resulting URDF passes structural validation.
+- The arm has one connected six-joint serial chain with no tool or payload
+  link.
+- The shoulder, elbow, and wrist pivots are spatially distinct in the zero
+  pose; the six movable links are not stacked on one common vertical line.
+- In Gazebo, commanding `arm_joint_2` moves the upper-arm/downstream chain,
+  commanding `arm_joint_3` bends the elbow relative to the upper arm, and
+  commanding joints 4–6 produces recognizable wrist roll/pitch/roll motion.
+- Each command topic still controls only its matching joint and
+  `/joint_states` still reports all six joints.
+- With no command, the arm holds its documented zero pose without falling onto
+  the base or ground.
+- Existing base translation, rotation, odometry, TF, clock, and arm topic
+  contracts remain unchanged.
+
+### Validation
+
+Run the Task 3 build and headless integration test. Then launch Gazebo with the
+GUI and command the shoulder, elbow, and wrist joints separately using small
+in-limit targets:
+
+```bash
+ros2 launch burke_gazebo base_sim.launch.py
+ros2 topic pub --once /arm/joint_2/command std_msgs/msg/Float64 "{data: 0.35}"
+ros2 topic pub --once /arm/joint_3/command std_msgs/msg/Float64 "{data: -0.55}"
+ros2 topic pub --once /arm/joint_4/command std_msgs/msg/Float64 "{data: 0.30}"
+ros2 topic pub --once /arm/joint_5/command std_msgs/msg/Float64 "{data: -0.25}"
+ros2 topic pub --once /arm/joint_6/command std_msgs/msg/Float64 "{data: 0.30}"
+```
+
+Verify visually that the shoulder, elbow, and wrist have distinct pivots and
+motions. Return all joints to zero with the README reset loop, then leave the
+simulation running briefly to confirm that the arm holds position.
+
+### Handoff
+
+Record the provisional segment dimensions, joint-origin layout, cylinder
+orientations, zero pose, observed shoulder/elbow/wrist motions, automated test
+results, and any remaining visual or physics limitations.
+
+## Task 5 — Final Regression Validation
+
+- [x] Complete
+
+### Prerequisite
+
+Tasks 1–4.
 
 ### Goal
 
@@ -444,7 +537,7 @@ documented acceptance criteria from passing.
 ### Allowed Scope
 
 - Read the full milestone implementation.
-- Make minimal corrections inside files already touched by Tasks 1–3.
+- Make minimal corrections inside files already touched by Tasks 1–4.
 - No refactor, new capability, higher-level motion interface, or future robot
   component.
 
@@ -464,7 +557,7 @@ documented acceptance criteria from passing.
 
 ### Validation
 
-Run the full Task 3 validation, then perform one GUI demonstration:
+Run the full Task 4 validation, then perform one GUI demonstration:
 
 ```bash
 ros2 launch burke_gazebo base_sim.launch.py
@@ -480,3 +573,25 @@ to the arm model, controller systems, or bridges.
 Report the final build and test results, the six observed joint motions, base
 regression results, remaining warnings, and any validation that could not be
 performed. Mark this task complete only when no required work remains.
+
+### Task 5 Handoff
+
+- `colcon build --symlink-install --packages-select burke_description burke_gazebo`: passed.
+- Xacro expansion and `check_urdf`: passed; the model has exactly six arm
+  revolute joints, `arm_link_6` is terminal, and no tool, flange, or payload
+  link exists.
+- Headless `base_sim.launch.py gui:=false`: spawned successfully in the
+  supported ROS 2 Jazzy/Gazebo Harmonic runtime. All six command bridges and
+  the `/joint_states` bridge were created without arm model or controller
+  errors.
+- Registered `test_arm_topics`: passed in 5.39 seconds. It commanded all six
+  joints independently, verified joint-state targets and limits, and verified
+  base odometry changed after `/cmd_vel`.
+- Static contract validation confirmed the documented `/cmd_vel`, `/odom`,
+  `/tf`, `/clock`, six arm command topics, and `/joint_states` mappings.
+- The GUI demonstration was not run because this validation environment is
+  headless. The sandbox-only launch attempt was also blocked by DDS socket and
+  filesystem permissions; the approved runtime launch passed.
+- Gazebo emitted no arm-specific model, controller, or bridge errors. The
+  runtime log contained repeated robot-state-publisher time-backward warnings
+  during startup, unrelated to the arm geometry or command mappings.

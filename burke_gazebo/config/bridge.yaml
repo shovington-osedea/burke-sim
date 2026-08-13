@@ -25,3 +25,48 @@
   gz_type_name: "gz.msgs.Clock"
   direction: GZ_TO_ROS
   qos_profile: CLOCK
+
+# Arm command topics use one scalar Float64 per joint. The Gazebo topics are
+# explicitly scoped to the fixed spawned model name to avoid collisions with
+# another model in a future world.
+- ros_topic_name: "/arm/joint_1/command"
+  gz_topic_name: "/model/burke_base/arm/joint_1/command"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/arm/joint_2/command"
+  gz_topic_name: "/model/burke_base/arm/joint_2/command"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/arm/joint_3/command"
+  gz_topic_name: "/model/burke_base/arm/joint_3/command"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/arm/joint_4/command"
+  gz_topic_name: "/model/burke_base/arm/joint_4/command"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/arm/joint_5/command"
+  gz_topic_name: "/model/burke_base/arm/joint_5/command"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/arm/joint_6/command"
+  gz_topic_name: "/model/burke_base/arm/joint_6/command"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/joint_states"
+  gz_topic_name: "/model/burke_base/joint_states"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS
