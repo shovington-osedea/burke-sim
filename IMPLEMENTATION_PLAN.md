@@ -5,7 +5,7 @@
 Replace the current primitive visuals with the supplied CAD STL assets while
 keeping simulation physics deliberately simple:
 
-- use `MiR1350 1.0.stl` as the mobile-platform visual;
+- use `MiR1350_reduced.stl` as the mobile-platform visual;
 - use the split `UR8L_PART_*.stl` files as the visuals for an articulated
   6-DOF arm mounted directly on top of the platform;
 - retain primitive boxes, cylinders, and spheres for collision geometry;
@@ -46,15 +46,15 @@ MiR1350, and the complete UR model becomes approximately `0.702 × 0.943 ×
 
 | Asset | Raw size X × Y × Z | Planned role |
 | --- | --- | --- |
-| `MiR1350 1.0.stl` | `910.000 × 1350.000 × 320.963` | Platform visual |
-| `UR8 Long.stl` | `701.756 × 942.624 × 1788.369` | Assembled reference only |
-| `UR8L_PART_1_C-2008883.stl` | `228.100 × 203.998 × 106.400` | Arm rigid body 1 |
-| `UR8L_PART_2_C-2008884.stl` | `183.997 × 192.738 × 150.558` | Arm rigid body 2 |
-| `UR8L_PART_3_C-2008885.stl` | `190.706 × 1038.652 × 150.000` | Arm rigid body 3 |
-| `UR8L_PART_4_C-2008886.stl` | `150.718 × 824.542 × 120.000` | Arm rigid body 4 |
-| `UR8L_PART_5_C-2008887.stl` | `111.607 × 119.888 × 90.002` | Arm rigid body 5 |
-| `UR8L_PART_6_C-2008888.stl` | `134.323 × 109.298 × 90.393` | Arm rigid body 6 |
-| `UR8L_PART_7_C-2008889.stl` | `57.400 × 95.474 × 89.989` | Arm rigid body 7 |
+| `MiR1350.stl` | `910.000 × 1350.000 × 320.963` | Platform visual |
+| `UR8_Long.stl` | `701.756 × 942.624 × 1788.369` | Assembled reference only |
+| `UR8L_PART_1.stl` | `228.100 × 203.998 × 106.400` | Arm rigid body 1 |
+| `UR8L_PART_2.stl` | `183.997 × 192.738 × 150.558` | Arm rigid body 2 |
+| `UR8L_PART_3.stl` | `190.706 × 1038.652 × 150.000` | Arm rigid body 3 |
+| `UR8L_PART_4.stl` | `150.718 × 824.542 × 120.000` | Arm rigid body 4 |
+| `UR8L_PART_5.stl` | `111.607 × 119.888 × 90.002` | Arm rigid body 5 |
+| `UR8L_PART_6.stl` | `134.323 × 109.298 × 90.393` | Arm rigid body 6 |
+| `UR8L_PART_7.stl` | `57.400 × 95.474 × 89.989` | Arm rigid body 7 |
 
 The assembled UR STL is a single rigid mesh and therefore cannot be the visual
 for a moving 6-DOF chain. Use it only to validate the zero-pose assembly. Use
@@ -87,7 +87,7 @@ The following supplied assets are explicitly deferred and must not be added:
 
 ### MiR platform
 
-- `MiR1350 1.0.stl` is the sole overall platform visual. Remove or suppress
+- `MiR1350_reduced.stl` is the sole overall platform visual. Remove or suppress
   duplicate primitive chassis, wheel, and caster visuals that protrude through
   it, but preserve the existing drive-wheel and support link structure needed
   by physics.
@@ -134,7 +134,7 @@ base_link
 - The fixed mount height must be derived from the final platform visual and
   collision dimensions, not copied from the old primitive chassis.
 - Each of the seven split UR STLs must appear on exactly one arm link. Do not
-  use `UR8 Long.stl` as an additional runtime visual, because that would create
+  use `UR8_Long.stl` as an additional runtime visual, because that would create
   a duplicate rigid arm over the articulated one.
 - Preserve the mesh's local CAD origin where it corresponds to a joint axis.
   Use link visual origins and joint origins deliberately; do not recenter every
@@ -229,7 +229,98 @@ validated scale, orientation, and link mapping established earlier.
 
 ## Task 1 — Audit and Map the CAD Assets
 
-- [ ] Complete
+- [x] Complete
+
+### Task 1 audit (2026-08-13; owner clarifications received)
+
+The source meshes were inspected read-only. Each selected file is a valid
+binary STL: its 80-byte header, triangle count, and file length satisfy the
+binary STL record layout. The triangle counts and raw vertex bounds below were
+calculated directly from every triangle record; STL units are intentionally
+not assumed here. `scale = 0.001` is the only scale that has been validated
+against the expected MiR class dimensions.
+
+| Asset | Triangles | Raw min `(x,y,z)` | Raw max `(x,y,z)` | Raw AABB size `(x,y,z)` | Import |
+| --- | ---: | --- | --- | --- | --- |
+| `MiR1350.stl` | 722,134 | `(-455.000,-675.000,0.037)` | `(455.000,675.000,321.000)` | `(910.000,1350.000,320.963)` | pass |
+| `UR8_Long.stl` | 274,266 | `(-402.100,-113.680,-14.145)` | `(299.656,828.944,1774.224)` | `(701.756,942.624,1788.369)` | pass |
+| `UR8L_PART_1.stl` | 38,224 | `(-126.100,-101.999,-0.000)` | `(102.000,101.999,106.400)` | `(228.100,203.998,106.400)` | pass |
+| `UR8L_PART_2.stl` | 44,908 | `(-74.997,-112.200,-75.282)` | `(109.000,80.538,75.276)` | `(183.997,192.738,150.558)` | pass |
+| `UR8L_PART_3.stl` | 47,940 | `(-112.200,-77.598,-75.000)` | `(78.506,961.054,75.000)` | `(190.706,1038.652,150.000)` | pass |
+| `UR8L_PART_4.stl` | 43,060 | `(-62.718,-62.154,-60.000)` | `(88.000,762.388,60.000)` | `(150.718,824.542,120.000)` | pass |
+| `UR8L_PART_5.stl` | 26,676 | `(-64.100,-47.888,-45.001)` | `(47.507,72.000,45.001)` | `(111.607,119.888,90.002)` | pass |
+| `UR8L_PART_6.stl` | 36,716 | `(-48.323,-64.100,-45.197)` | `(86.000,45.198,45.197)` | `(134.323,109.298,90.393)` | pass |
+| `UR8L_PART_7.stl` | 8,500 | `(-51.200,-45.000,-44.994)` | `(6.200,50.474,44.994)` | `(57.400,95.474,89.989)` | pass |
+
+The deferred meshes were also enumerated but are excluded from the mapping:
+`LIFTKIT-UR-500-1100-601R.stl`, `LIFTKIT_1.stl`, `LIFTKIT_2.stl`,
+`LIFTKIT_3.stl`, `Extended Camera Module Assembly.stl`, and
+`UR_Control_Box.stl`.
+
+#### Verified scale and platform frame
+
+At `0.001`, the MiR AABB is `0.910 × 1.350 × 0.320963 m`; the assembled UR
+AABB is `0.701756 × 0.942624 × 1.788369 m`. This validates the provisional
+scale numerically within the expected MiR envelope and the documented UR8L
+reach class, but does not establish a vendor unit declaration.
+
+The MiR mesh is centred in raw X/Y (`[-455,455] × [-675,675]`) and its lowest
+vertex is raw `z=0.037`. The owner approved `rpy=(0,0,+pi/2)` =
+`(0,0,1.570796) rad`, mapping the raw 1350 dimension to robot `+X` and the
+raw 910 dimension to robot `+Y`. The owner also approved zero mesh-origin Z
+offset with respect to `base_link`; the raw bottom is consequently
+`0.000037 m` above the mesh origin. The arm is centred at `x=0, y=0` and flat
+on the MiR top surface, using the existing base-link top reference. The exact
+ground clearance remains a Task 2 placement detail.
+
+#### Split/assembled comparison and provisional part map
+
+The seven split files are not in the assembled file's common frame: their
+union has raw bounds `(-126.100,-112.200,-75.282)` to
+`(109.000,961.054,106.400)`, whereas `UR8_Long.stl` has bounds
+`(-402.100,-113.680,-14.145)` to `(299.656,828.944,1774.224)`. The split
+meshes therefore cannot be overlaid by translation alone, and their local
+long axes (notably PART 3 and PART 4 on local Y) require per-part rotations.
+The dimensions support the following *provisional* semantic order, but do
+not verify the six parent-frame pivots or axes:
+
+| Split STL | Provisional link |
+| --- | --- |
+| `UR8L_PART_1.stl` | `arm_base_link` |
+| `UR8L_PART_2.stl` | `arm_link_1` |
+| `UR8L_PART_3.stl` | `arm_link_2` |
+| `UR8L_PART_4.stl` | `arm_link_3` |
+| `UR8L_PART_5.stl` | `arm_link_4` |
+| `UR8L_PART_6.stl` | `arm_link_5` |
+| `UR8L_PART_7.stl` | `arm_link_6` |
+
+The owner approved this provisional mapping. The arm now uses the nominal UR8
+Long kinematics, with the final two pivot frames refitted to the circular
+interfaces in the supplied split CAD. In metres/radians, the current
+parent-link joint origins and joint-frame axes are:
+
+| Joint | Parent-link origin `(x,y,z)` m | Axis | Child-frame rotation rpy rad |
+| --- | --- | --- | --- |
+| `arm_joint_1` | `(0,0,0.2186)` | `(0,0,1)` | `(0,0,0)` |
+| `arm_joint_2` | `(0,0,0)` | `(0,0,1)` | `(pi/2,0,0)` |
+| `arm_joint_3` | `(-0.8989,0,0)` | `(0,0,1)` | `(0,0,0)` |
+| `arm_joint_4` | `(-0.7149,0,0.1824)` | `(0,0,1)` | `(0,0,0)` |
+| `arm_joint_5` | `(-0.0706,0,-0.00025)` | `(0,0,1)` | `(0,-pi/2,0)` |
+| `arm_joint_6` | `(-0.086,0,0.0641)` | `(0,0,1)` | `(0,pi/2,0)` |
+
+The first four transforms are nominal vendor-description values. The last two
+use CAD-derived wrist pivot positions and axes so PART 5, PART 6, and PART 7
+remain connected while the wrist joints move. The fixed arm mount is centred
+and level at the MiR visual top, `0.321230 m` above `base_link`; `base_link` is
+`0.120230 m` above `base_footprint`.
+
+#### Owner-approved assumptions and later adjustments
+
+The owner supplied the missing orientation, mount, part order, and kinematic
+values. Joint values may be adjusted later during visual fitting. The audit
+comparison tolerance remains `5 mm` maximum surface deviation, with `1 mm`
+as the target for coincident pivot markers. No URDF/Xacro, collision, launch,
+bridge, CMake, package, or STL files were changed by this audit.
 
 ### Goal
 
@@ -249,7 +340,7 @@ Produce a verified CAD mapping before changing the robot description.
 - Validate the provisional `0.001` scale against the MiR and assembled UR
   extents.
 - Determine the MiR rotation required to map its long axis to robot `+X`.
-- Overlay or otherwise compare the seven split UR meshes with `UR8 Long.stl`.
+- Overlay or otherwise compare the seven split UR meshes with `UR8_Long.stl`.
 - Produce an explicit table mapping each split STL to `arm_base_link` or
   `arm_link_1` through `arm_link_6`.
 - Record all six pivot origins and joint axes in parent-link coordinates.
@@ -273,7 +364,7 @@ chosen comparison tolerance, and screenshots or numeric overlay evidence.
 
 ## Task 2 — Integrate the MiR Visual and Refit Base Collisions
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -327,6 +418,41 @@ timeout 30s ros2 launch burke_gazebo base_sim.launch.py gui:=false
 
 Also perform one GUI collision-visualization check and a bounded straight and
 rotational drive test followed by an explicit zero `/cmd_vel` command.
+
+### Task 2 handoff (2026-08-14)
+
+The runtime platform visual was subsequently switched to
+`MiR1350_reduced.stl`. This file has 36,106 triangles and measured bounds
+`0.910000 x 1.350000 x 0.321230 m`; it is already in metres and therefore uses
+mesh scale `1.0`. Its minimum Z is `-0.000230 m`, so the base reference was
+adjusted to `z=0.120230 m`, matching the wheel-axis height. The visual origin
+includes a `+0.000230 m` correction so the mesh bottom coincides with
+`base_link`; collision and wheel geometry are unchanged.
+
+- Changed `burke_description/CMakeLists.txt` to install the complete `cad/`
+  directory.
+- Added the sole platform visual using the URI
+  `package://burke_description/cad/stl/MiR1350_reduced.stl`, scale `1.0`, and
+  `rpy=(0,0,+pi/2)`. This maps the measured reduced-mesh bounds to robot-frame
+  `1.350 x 0.910 x 0.321230 m`.
+- Corrected the reduced mesh's `-0.000230 m` minimum Z at the visual origin.
+  `base_footprint_joint` is `z=0.120230 m`, placing the platform bottom at the
+  drive-wheel axis height (`wheel_radius=0.12 m`) with no intended burial.
+- Replaced the chassis visual and collision with the CAD mesh and a primitive
+  box collision of `1.340 x 0.900 x 0.310963 m`, centred at
+  `z=0.1555195 m`. This is a documented `0.005 m` clearance on each horizontal
+  side and `0.010 m` total vertical clearance relative to the audited visual
+  height. The box inertia is `(ixx,iyy,izz)=(3.400117,7.096117,9.771000)` for
+  the existing `45 kg` mass.
+- Removed wheel and caster primitive visuals while preserving their collision
+  links, joint names, wheel separation (`0.68 m`), wheel radius (`0.12 m`),
+  and differential-drive plugin.
+- Mounted the arm at the CAD visual top (`0.321230 m` above `base_link`) rather
+  than at half of the collision height.
+- Static XML validation and `git diff --check` passed. The requested ROS build
+  could not run because this environment does not provide `ament_cmake`; run
+  the documented build after sourcing ROS 2 Jazzy. GUI and drive regression
+  checks remain environment-dependent.
 
 ### Handoff
 
@@ -382,7 +508,7 @@ links mounted on the MiR, with primitive collision and inertia only.
 
 Run the Task 2 build, Xacro, URDF, and bounded launch checks. In the GUI, inspect
 the zero pose from front, side, and top views with collision visualization
-enabled. Compare the articulated zero pose against `UR8 Long.stl` without
+enabled. Compare the articulated zero pose against `UR8_Long.stl` without
 shipping the assembled reference in the runtime model.
 
 ### Handoff

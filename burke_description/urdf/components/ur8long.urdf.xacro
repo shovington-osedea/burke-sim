@@ -7,11 +7,17 @@
   -->
 
   <xacro:macro name="ur8long_arm" params="
-      chassis_height
+      arm_mount_z
       kinematics_parameters_file
       joint_limits_parameters_file
       physical_parameters_file
       visual_parameters_file">
+    <!-- Simulation tuning: moderate viscous joint damping prevents gravity
+         oscillation without making the arm sluggish. Units are N*m*s/rad. -->
+    <xacro:property name="arm_joint_damping" value="0.5"/>
+    <!-- Small Coulomb friction reduces gravity-driven drift at rest. Units are
+         N*m. This remains intentionally lower than the damping contribution. -->
+    <xacro:property name="arm_joint_friction" value="0.1"/>
     <xacro:property name="kinematics_data" value="${xacro.load_yaml(kinematics_parameters_file)['kinematics']}"/>
     <xacro:property name="limits_data" value="${xacro.load_yaml(joint_limits_parameters_file)['joint_limits']}"/>
     <xacro:property name="physical_data" value="${xacro.load_yaml(physical_parameters_file)['inertia_parameters']}"/>
@@ -25,6 +31,7 @@
         <geometry>
           <mesh filename="package://burke_description/${entry['path']}" scale="${entry['scale']} ${entry['scale']} ${entry['scale']}"/>
         </geometry>
+        <material name="arm_gray"/>
       </visual>
     </xacro:macro>
 
@@ -68,7 +75,7 @@
     <joint name="arm_mount_joint" type="fixed">
       <parent link="base_link"/>
       <child link="arm_mount_link"/>
-      <origin xyz="0 0 ${chassis_height / 2}" rpy="0 0 0"/>
+      <origin xyz="0 0 ${arm_mount_z}" rpy="0 0 0"/>
     </joint>
 
     <!-- Canonical UR bodies mapped to the stable Burk-e arm_link_N names. -->
@@ -112,7 +119,7 @@
         <origin xyz="${pose['x']} ${pose['y']} ${pose['z']}" rpy="${pose['roll']} ${pose['pitch']} ${pose['yaw']}"/>
         <axis xyz="0 0 1"/>
         <limit lower="${limit['lower']}" upper="${limit['upper']}" effort="${limit['effort']}" velocity="${limit['velocity']}"/>
-        <dynamics damping="0.0" friction="0.0"/>
+        <dynamics damping="${arm_joint_damping}" friction="${arm_joint_friction}"/>
       </joint>
     </xacro:macro>
     <xacro:ur_joint name="arm_joint_1" parent="arm_mount_link" child="arm_link_1" kinematics_key="shoulder" limits_key="shoulder_pan_joint"/>
@@ -122,24 +129,25 @@
     <xacro:ur_joint name="arm_joint_5" parent="arm_link_4" child="arm_link_5" kinematics_key="wrist_2" limits_key="wrist_2_joint"/>
     <xacro:ur_joint name="arm_joint_6" parent="arm_link_5" child="arm_link_6" kinematics_key="wrist_3" limits_key="wrist_3_joint"/>
 
-    <xacro:macro name="arm_position_controller" params="joint topic speed">
+    <xacro:macro name="arm_position_controller" params="joint topic speed initial_position">
       <gazebo>
         <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
           <joint_name>${joint}</joint_name>
           <topic>${topic}</topic>
-          <initial_position>0.0</initial_position>
+          <initial_position>${initial_position}</initial_position>
           <use_velocity_commands>true</use_velocity_commands>
           <cmd_max>${speed}</cmd_max>
           <cmd_min>-${speed}</cmd_min>
         </plugin>
       </gazebo>
     </xacro:macro>
-    <xacro:arm_position_controller joint="arm_joint_1" topic="/model/burke_base/arm/joint_1/command" speed="${limits_data['shoulder_pan_joint']['velocity']}"/>
-    <xacro:arm_position_controller joint="arm_joint_2" topic="/model/burke_base/arm/joint_2/command" speed="${limits_data['shoulder_lift_joint']['velocity']}"/>
-    <xacro:arm_position_controller joint="arm_joint_3" topic="/model/burke_base/arm/joint_3/command" speed="${limits_data['elbow_joint']['velocity']}"/>
-    <xacro:arm_position_controller joint="arm_joint_4" topic="/model/burke_base/arm/joint_4/command" speed="${limits_data['wrist_1_joint']['velocity']}"/>
-    <xacro:arm_position_controller joint="arm_joint_5" topic="/model/burke_base/arm/joint_5/command" speed="${limits_data['wrist_2_joint']['velocity']}"/>
-    <xacro:arm_position_controller joint="arm_joint_6" topic="/model/burke_base/arm/joint_6/command" speed="${limits_data['wrist_3_joint']['velocity']}"/>
+    <!-- Default pose in degrees: [0, -90, 0, -90, 0, 0]. -->
+    <xacro:arm_position_controller joint="arm_joint_1" topic="/model/burke_base/arm/joint_1/command" speed="${limits_data['shoulder_pan_joint']['velocity']}" initial_position="0.0"/>
+    <xacro:arm_position_controller joint="arm_joint_2" topic="/model/burke_base/arm/joint_2/command" speed="${limits_data['shoulder_lift_joint']['velocity']}" initial_position="${-pi / 2}"/>
+    <xacro:arm_position_controller joint="arm_joint_3" topic="/model/burke_base/arm/joint_3/command" speed="${limits_data['elbow_joint']['velocity']}" initial_position="0.0"/>
+    <xacro:arm_position_controller joint="arm_joint_4" topic="/model/burke_base/arm/joint_4/command" speed="${limits_data['wrist_1_joint']['velocity']}" initial_position="${-pi / 2}"/>
+    <xacro:arm_position_controller joint="arm_joint_5" topic="/model/burke_base/arm/joint_5/command" speed="${limits_data['wrist_2_joint']['velocity']}" initial_position="0.0"/>
+    <xacro:arm_position_controller joint="arm_joint_6" topic="/model/burke_base/arm/joint_6/command" speed="${limits_data['wrist_3_joint']['velocity']}" initial_position="0.0"/>
 
     <gazebo>
       <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">

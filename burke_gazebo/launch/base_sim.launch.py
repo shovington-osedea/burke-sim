@@ -1,10 +1,11 @@
-"""Launch the empty world with one primitive Burk-e base."""
+"""Launch the empty world with one CAD-visualized Burk-e base."""
 
+import os
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
@@ -14,6 +15,12 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     gazebo_share = Path(get_package_share_directory("burke_gazebo"))
     description_share = Path(get_package_share_directory("burke_description"))
+    # ros_gz_sim resolves URDF package:// meshes as model:// URIs. Gazebo must
+    # therefore search the installed share parent for model/burke_description.
+    gazebo_resource_path = os.environ.get("GZ_SIM_RESOURCE_PATH", "")
+    resource_roots = [str(description_share.parent)]
+    if gazebo_resource_path:
+        resource_roots.append(gazebo_resource_path)
     world_launch = gazebo_share / "launch" / "empty_world.launch.py"
     bridge_config = gazebo_share / "config" / "bridge.yaml"
     xacro_file = description_share / "urdf" / "burke_base.urdf.xacro"
@@ -21,6 +28,10 @@ def generate_launch_description():
     robot_description = ParameterValue(Command(["xacro ", str(xacro_file)]), value_type=str)
 
     return LaunchDescription([
+        SetEnvironmentVariable(
+            name="GZ_SIM_RESOURCE_PATH",
+            value=os.pathsep.join(resource_roots),
+        ),
         DeclareLaunchArgument(
             "gui",
             default_value="true",

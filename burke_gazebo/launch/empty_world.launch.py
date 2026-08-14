@@ -23,12 +23,10 @@ def generate_launch_description():
     ) / "launch" / "gz_sim.launch.py"
     gui = LaunchConfiguration("gui")
     render_engine = LaunchConfiguration("render_engine")
+    software_rendering = LaunchConfiguration("software_rendering")
 
     return LaunchDescription(
         [
-            # Simulation default: software OpenGL avoids renderer startup
-            # failures on VMs and systems without a usable GPU context.
-            SetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE", "true"),
             DeclareLaunchArgument(
                 "gui",
                 default_value="true",
@@ -38,6 +36,16 @@ def generate_launch_description():
                 "render_engine",
                 default_value="ogre",
                 description="Gazebo render engine (ogre is the supported project default).",
+            ),
+            DeclareLaunchArgument(
+                "software_rendering",
+                default_value="true",
+                description="Use software OpenGL for reliable rendering in VMs.",
+            ),
+            SetEnvironmentVariable(
+                "LIBGL_ALWAYS_SOFTWARE",
+                "true",
+                condition=IfCondition(software_rendering),
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(str(gz_launch)),

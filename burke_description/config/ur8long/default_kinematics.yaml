@@ -6,6 +6,8 @@ kinematics:
   upper_arm: {x: 0.0, y: 0.0, z: 0.0, roll: 1.570796327, pitch: 0.0, yaw: 0.0}
   forearm: {x: -0.8989, y: 0.0, z: 0.0, roll: 0.0, pitch: 0.0, yaw: 0.0}
   wrist_1: {x: -0.7149, y: 0.0, z: 0.1824, roll: 0.0, pitch: 0.0, yaw: 0.0}
-  wrist_2: {x: 0.0, y: -0.1361, z: 0.0, roll: 1.570796327, pitch: 0.0, yaw: 0.0}
-  wrist_3: {x: 0.0, y: 0.1434, z: 0.0, roll: 1.5707963265897931, pitch: 3.141592653589793, yaw: 3.141592653589793}
+  # The wrist pivots below were recovered from the circular interfaces in the
+  # supplied split CAD, expressed in their corrected parent-link frames.
+  wrist_2: {x: -0.0706, y: 0.0, z: -0.00025, roll: 0.0, pitch: -1.570796326794897, yaw: 0.0}
+  wrist_3: {x: -0.086, y: 0.0, z: 0.0641, roll: 0.0, pitch: 1.570796326794897, yaw: 0.0}
   hash: calib_464256464824449623

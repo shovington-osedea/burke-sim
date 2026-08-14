@@ -5,11 +5,30 @@
     a stable, primitive-geometry MiR1350-style base. Keep all tunable physical
     values here so Gazebo integration can consume the same values later.
   -->
-  <xacro:property name="chassis_length" value="1.00"/>
-  <xacro:property name="chassis_width" value="0.70"/>
-  <xacro:property name="chassis_height" value="0.22"/>
-  <xacro:property name="chassis_center_z" value="0.23"/>
-  <xacro:property name="chassis_mass" value="45.0"/>
+  <!--
+    CAD visual assumptions from the Task 1 audit:
+    MiR1350_reduced.stl is a reduced 36,106-triangle mesh with measured bounds
+    0.910000 x 1.350000 x 0.321230 m. It is already in metres, so its scale is
+    1.0. The approved yaw is +pi/2, and the mesh origin is retained; its
+    measured bottom is 0.000230 m below the origin.
+  -->
+  <xacro:property name="mir_stl_scale" value="1.0"/>
+  <xacro:property name="mir_visual_length" value="1.350"/>
+  <xacro:property name="mir_visual_width" value="0.910"/>
+  <xacro:property name="mir_visual_height" value="0.321230"/>
+  <xacro:property name="mir_visual_bottom_offset" value="-0.000230"/>
+  <!-- Cancel the small negative STL minimum so the mesh bottom is at base_link. -->
+  <xacro:property name="mir_visual_z_offset" value="${-mir_visual_bottom_offset}"/>
+  <xacro:property name="mir_mesh_yaw" value="${pi / 2}"/>
+
+  <!-- The 5 mm per-side collision clearance is deliberately conservative. -->
+  <xacro:property name="chassis_length" value="1.340"/>
+  <xacro:property name="chassis_width" value="0.900"/>
+  <xacro:property name="chassis_height" value="0.310963"/>
+  <xacro:property name="chassis_collision_center_z" value="0.1555195"/>
+  <!-- Place base_link and the CAD bottom at the drive-wheel axis height. -->
+  <xacro:property name="chassis_center_z" value="0.120230"/>
+  <xacro:property name="chassis_mass" value="450.0"/>
   <xacro:property name="wheel_radius" value="0.12"/>
   <xacro:property name="wheel_width" value="0.06"/>
   <xacro:property name="wheel_separation" value="0.68"/>
@@ -30,6 +49,8 @@
   <xacro:property name="odom_publish_frequency" value="50.0"/>
 
   <material name="chassis_blue"><color rgba="0.08 0.22 0.42 1.0"/></material>
+  <material name="mir_gray"><color rgba="0.48 0.50 0.53 1.0"/></material>
+  <material name="arm_gray"><color rgba="0.72 0.74 0.77 1.0"/></material>
   <material name="wheel_black"><color rgba="0.03 0.03 0.03 1.0"/></material>
   <material name="caster_gray"><color rgba="0.35 0.35 0.35 1.0"/></material>
 
@@ -37,20 +58,32 @@
 
   <link name="base_link">
     <visual>
-      <origin xyz="0 0 0"/>
-      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
-      <material name="chassis_blue"/>
+      <origin xyz="0 0 ${mir_visual_z_offset}" rpy="0 0 ${mir_mesh_yaw}"/>
+      <geometry>
+        <!-- The reduced mesh is already in metres. -->
+        <mesh filename="package://burke_description/cad/stl/MiR1350_reduced.stl"
+              scale="${mir_stl_scale} ${mir_stl_scale} ${mir_stl_scale}"/>
+      </geometry>
+      <material name="mir_gray"/>
     </visual>
     <collision>
-      <origin xyz="0 0 0"/>
+      <origin xyz="0 0 ${chassis_collision_center_z}"/>
       <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
     </collision>
     <inertial>
-      <origin xyz="0 0 0"/>
+      <origin xyz="0 0 ${chassis_collision_center_z}"/>
       <mass value="${chassis_mass}"/>
-      <inertia ixx="3.006" ixy="0" ixz="0" iyy="4.506" iyz="0" izz="6.006"/>
+      <!-- Solid-box inertia for 45 kg and the collision dimensions above. -->
+      <inertia ixx="3.400117" ixy="0" ixz="0" iyy="7.096117" iyz="0" izz="9.771000"/>
     </inertial>
   </link>
+
+  <!-- Explicitly retain shadow casting for the CAD visual. -->
+  <gazebo reference="base_link">
+    <visual>
+      <cast_shadows>true</cast_shadows>
+    </visual>
+  </gazebo>
 
   <joint name="base_footprint_joint" type="fixed">
     <parent link="base_footprint"/>
@@ -60,11 +93,6 @@
 
   <xacro:macro name="drive_wheel" params="side y">
     <link name="${side}_drive_wheel_link">
-      <visual>
-        <origin rpy="${pi/2} 0 0"/>
-        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
-        <material name="wheel_black"/>
-      </visual>
       <collision>
         <origin rpy="${pi/2} 0 0"/>
         <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
@@ -92,7 +120,6 @@
 
   <xacro:macro name="support_caster" params="name x">
     <link name="${name}_support_link">
-      <visual><geometry><sphere radius="${caster_radius}"/></geometry><material name="caster_gray"/></visual>
       <collision><geometry><sphere radius="${caster_radius}"/></geometry></collision>
       <inertial>
         <mass value="${caster_mass}"/>
@@ -110,7 +137,7 @@
   <xacro:support_caster name="rear" x="-0.38"/>
 
   <xacro:ur8long_arm
-    chassis_height="${chassis_height}"
+    arm_mount_z="${mir_visual_height}"
     kinematics_parameters_file="$(find burke_description)/config/ur8long/default_kinematics.yaml"
     joint_limits_parameters_file="$(find burke_description)/config/ur8long/joint_limits.yaml"
     physical_parameters_file="$(find burke_description)/config/ur8long/physical_parameters.yaml"
