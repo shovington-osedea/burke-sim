@@ -51,6 +51,50 @@
       </link>
     </model>
 
+    <!--
+      Challenger reduced aircraft assumptions:
+      - challenger_reduced.stl is treated as millimetre-authored geometry and
+        imported with a 0.001 scale factor.
+      - Its measured raw bounds are x=[-9.681192, 9.681192] m,
+        y=[0.968761, 6.668792] m, z=[3.657600, 24.332212] m after scaling.
+      - challenger_collision.stl is the separate reduced collision mesh. Its
+        scaled bounds are x=[-9.681139, 9.681139] m,
+        y=[0.970236, 6.666029] m, z=[3.657600, 24.332213] m. It shares the
+        visual mesh's source frame, scale, and pose.
+      - The pose maps STL z to world +X (fuselage), STL x to world +Y
+        (span), and STL y to world +Z (height). The translation centres the
+        resulting 20.674612 m fuselage on world X=0 and puts its lowest point
+        on the ground plane. These are simulation import assumptions, not
+        commissioned aircraft dimensions or a surveyed aircraft pose.
+    -->
+    <model name="challenger_reduced">
+      <static>true</static>
+      <pose>-13.994906 0 -0.968761 1.57079632679 0 1.57079632679</pose>
+      <link name="aircraft_link">
+        <collision name="aircraft_collision">
+          <geometry>
+            <mesh>
+              <uri>model://burke_description/cad/stl/challenger_collision.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+        </collision>
+        <visual name="aircraft_visual">
+          <geometry>
+            <mesh>
+              <uri>model://burke_description/cad/stl/challenger_reduced.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+          <material>
+            <ambient>0.75 0.75 0.78 1</ambient>
+            <diffuse>0.82 0.82 0.86 1</diffuse>
+            <specular>0.25 0.25 0.25 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
     <light name="sun" type="directional">
       <cast_shadows>true</cast_shadows>
       <pose>-6 -4 10 0.35 -0.45 0.25</pose>

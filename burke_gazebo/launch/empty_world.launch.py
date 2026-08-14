@@ -1,5 +1,6 @@
 """Launch the deterministic empty Burk-e Gazebo world."""
 
+import os
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -18,6 +19,11 @@ def generate_launch_description():
     world = str(
         Path(get_package_share_directory("burke_gazebo")) / "worlds" / "empty.sdf"
     )
+    description_share = Path(get_package_share_directory("burke_description"))
+    gazebo_resource_path = os.environ.get("GZ_SIM_RESOURCE_PATH", "")
+    resource_roots = [str(description_share.parent)]
+    if gazebo_resource_path:
+        resource_roots.append(gazebo_resource_path)
     gz_launch = Path(
         get_package_share_directory("ros_gz_sim")
     ) / "launch" / "gz_sim.launch.py"
@@ -27,6 +33,13 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            # The world uses model://burke_description/... for the aircraft
+            # mesh, so make the installed package parent discoverable for both
+            # direct empty-world launches and nested base-simulation launches.
+            SetEnvironmentVariable(
+                "GZ_SIM_RESOURCE_PATH",
+                os.pathsep.join(resource_roots),
+            ),
             DeclareLaunchArgument(
                 "gui",
                 default_value="true",
