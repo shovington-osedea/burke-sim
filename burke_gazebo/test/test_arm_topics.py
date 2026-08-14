@@ -34,6 +34,7 @@ TARGETS = (0.20, -0.20, 0.18, -0.18, 0.16, -0.16)
 READY_TIMEOUT = 20.0
 MOTION_TIMEOUT = 20.0
 TARGET_TOLERANCE = 0.07
+TARGET_HOLD_DURATION = 0.5
 
 
 class ArmSmokeNode(Node):
@@ -184,6 +185,17 @@ def test_arm_topics_and_base_motion(simulation) -> None:
                 f"{name} to {target:.2f} rad; current positions: "
                 f"{_arm_positions(node.joint_state)}"
             )
+            hold_deadline = time.monotonic() + TARGET_HOLD_DURATION
+            while time.monotonic() < hold_deadline:
+                node.publish_joint_target(index, target)
+                rclpy.spin_once(node, timeout_sec=0.05)
+                position = _arm_positions(node.joint_state).get(name)
+                assert position is not None and math.isclose(
+                    position, target, abs_tol=TARGET_TOLERANCE
+                ), (
+                    f"{name} did not hold {target:.2f} rad after first reaching "
+                    f"it; current position: {position}"
+                )
             positions = _arm_positions(node.joint_state)
             for joint_name, position in positions.items():
                 lower, upper = JOINT_LIMITS[joint_name]

@@ -105,6 +105,11 @@ ros2 launch burke_gazebo base_sim.launch.py gui:=false
 Omit `gui:=false` for the interactive Gazebo view. Each arm command accepts a
 target angle in radians as `std_msgs/msg/Float64`:
 
+The simulated position controllers cap shoulder motion at `0.75 rad/s`, elbow
+motion at `1.0 rad/s`, and wrist motion at `1.5 rad/s`. These conservative
+simulation speeds and joint-specific damping reduce overshoot; the larger
+values in `joint_limits.yaml` remain the declared hardware limits.
+
 | Topic | Joint |
 | --- | --- |
 | `/arm/joint_1/command` | `arm_joint_1` |
