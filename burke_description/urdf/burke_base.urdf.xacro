@@ -128,6 +128,15 @@
       <child link="${name}_support_link"/>
       <origin xyz="${x} 0 ${caster_radius - chassis_center_z}"/>
     </joint>
+    <!--
+      These are simplified fixed spherical supports, not steerable caster
+      wheels.  Keep their tangential friction low so they can scrub during a
+      differential-drive in-place turn instead of locking the chassis yaw.
+    -->
+    <gazebo reference="${name}_support_link">
+      <mu1>0.02</mu1>
+      <mu2>0.02</mu2>
+    </gazebo>
   </xacro:macro>
 
   <xacro:support_caster name="front" x="0.38"/>

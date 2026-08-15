@@ -149,7 +149,7 @@
       </gazebo>
     </xacro:macro>
     <!-- Default pose in degrees: [0, -120, 120, -90, 90, 0]. -->
-    <xacro:arm_position_controller joint="arm_joint_1" topic="/model/burke_base/arm/joint_1/command" speed="0.75" initial_position="0.0"/>
+    <xacro:arm_position_controller joint="arm_joint_1" topic="/model/burke_base/arm/joint_1/command" speed="0.75" initial_position="${pi}"/>
     <xacro:arm_position_controller joint="arm_joint_2" topic="/model/burke_base/arm/joint_2/command" speed="0.75" initial_position="${-2*pi / 3}"/>
     <xacro:arm_position_controller joint="arm_joint_3" topic="/model/burke_base/arm/joint_3/command" speed="1.0" initial_position="${2*pi / 3}"/>
     <xacro:arm_position_controller joint="arm_joint_4" topic="/model/burke_base/arm/joint_4/command" speed="1.5" initial_position="${-pi / 2}"/>
