@@ -26,7 +26,7 @@ The workspace currently contains:
   and simulation tests.
 
 The current milestone mounts a six-joint UR8 Long description directly on the
-mobile base. Its nominal kinematics, public joint limits, masses, centres of
+mobile base through a three-stage LiftKit mast. Its nominal kinematics, public joint limits, masses, centres of
 mass, and inertia tensors come from Universal Robots' official ROS 2
 description at the recorded rolling-branch commit. The seven supplied UR8L
 STL parts are visual geometry at a millimetre-to-metre scale of `0.001`;
@@ -140,6 +140,45 @@ done
 The arm has no tool, payload, trajectory-control API, inverse kinematics, or
 hardware interface yet. It is intentionally limited to six independent
 Gazebo position commands and `/joint_states` feedback.
+
+### LiftKit mast
+
+The lift is modelled as three nested stages but has two actuated prismatic
+joints: `lift_stage_2_joint` and `lift_stage_3_joint`. Stage 1 is the fixed
+mounting frame; the two commanded strokes are 0–0.275 m and 0–0.225 m. The
+collapsed mast is 0.555 m high and the fully extended mast is 1.055 m high.
+Commands are `std_msgs/msg/Float64` in metres:
+
+| Topic | Joint | Range |
+| --- | --- | --- |
+| `/lift/stage_2/command` | `lift_stage_2_joint` | 0.0–0.275 m |
+| `/lift/stage_3/command` | `lift_stage_3_joint` | 0.0–0.225 m |
+
+The mast height is `0.555 + q_stage_2 + q_stage_3` metres. The arm mount is
+`0.876230 + q_stage_2 + q_stage_3` metres above `base_link`. Thus collapsed,
+half-height, and full-height targets are respectively `(0.0, 0.0)`,
+`(0.1375, 0.1125)`, and `(0.275, 0.225)`.
+
+For example, hold the two commands at the half-height target while inspecting
+feedback:
+
+```bash
+ros2 topic pub --rate 10 /lift/stage_2/command std_msgs/msg/Float64 "{data: 0.1375}"
+ros2 topic pub --rate 10 /lift/stage_3/command std_msgs/msg/Float64 "{data: 0.1125}"
+ros2 topic echo --once /joint_states
+```
+
+The LiftKit CAD visuals use the supplied STL files with a `0.001` scale to
+convert millimetres to metres. STL files are deliberately excluded from
+collision geometry; primitive perimeter boxes provide the inexpensive
+simulation collision envelope. Stage masses, the 0.05 m/s stroke-speed cap,
+and the 2500 N·m effort cap are simulation assumptions, not a validated
+hardware model.
+
+Operate the mast in this order: stop `/cmd_vel`, return the arm to its stow
+pose `[0, -2.0944, 2.0944, -1.5708, 1.5708, 0]` radians, command the lift while
+the base is stationary, then return both lift commands to zero before sending
+any new base motion. Send an explicit zero `/cmd_vel` on shutdown.
 
 ### Base model
 

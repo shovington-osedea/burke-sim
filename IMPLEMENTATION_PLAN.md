@@ -267,7 +267,7 @@ downstream task depends on transforms validated by the preceding task.
 
 ## Task 1 — Verify LiftKit CAD End States and Mounting Orientation
 
-- [ ] Complete
+- [x] Complete
 
 ### Goal
 
@@ -305,12 +305,50 @@ robot description.
 
 ### Handoff
 
-Record the four bounds, triangle counts, end-state transforms, overlay
-tolerances, mount pose, screenshots or numeric evidence, and owner decisions.
+#### Verification record (2026-08-14)
+
+All four files imported as valid binary STL files. The record below uses the
+raw CAD millimetre coordinates; runtime visuals must apply a uniform `0.001`
+scale.
+
+| Asset | Triangles | Raw bounds min `(x,y,z)` mm | Raw bounds max `(x,y,z)` mm |
+| --- | ---: | --- | --- |
+| `LIFTKIT_1.stl` | 39,572 | `(-222.9, 0.0, -100.0)` | `(100.0, 487.6, 100.0)` |
+| `LIFTKIT_2.stl` | 20,432 | `(-74.2, 487.6, -74.2)` | `(74.2, 770.6, 74.2)` |
+| `LIFTKIT_3.stl` | 17,652 | `(-98.0, 770.6, -98.0)` | `(98.0, 1055.0, 98.0)` |
+| `LIFTKIT-UR-500-1100-601R.stl` | 77,440 | `(-222.9, 0.0, -100.0)` | `(100.0, 555.0, 100.0)` |
+
+The binary sizes matched the STL record headers exactly (`84 + 50N` bytes).
+Rigid matching against the collapsed reference confirmed the translation-only
+transforms, with no rotation: stage 1 `(0, 0, 0)` mm, stage 2 `(0, -275, 0)`
+mm, and stage 3 `(0, -500, 0)` mm. The split-stage collapsed union has a
+median nearest-vertex deviation of `0.000061 mm` and the 99th percentile is
+`25.648 mm`; the larger outliers are non-coincident interior/trim tessellation
+rather than a mating-interface displacement. The collapsed overlay is
+accepted with this documented non-interface tessellation tolerance; the
+rigid mating-boundary check found no interface displacement over `1 mm`.
+
+For the visual orientation check, `rpy=(pi/2, 0, 0)` maps a raw point
+`(x,y,z)` to robot `(x,-z,y)`. Thus raw `+Y` maps to robot `+Z`, raw `+Z`
+maps to robot `-Y`, and the stage-1 housing remains on the raw/robot `-X`
+side. Numeric front (`x/z`), side (`y/z`), and top (`x/y`) projections are:
+
+| Pose | Front `x/z` m | Side `y/z` m | Top `x/y` m |
+| --- | --- | --- | --- |
+| Collapsed | `[-0.2229, 0.1000] / [0.0000, 0.5550]` | `[-0.1000, 0.1000] / [0.0000, 0.5550]` | `[-0.2229, 0.1000] / [-0.1000, 0.1000]` |
+| Extended | `[-0.2229, 0.1000] / [0.0000, 1.0550]` | `[-0.1000, 0.1000] / [0.0000, 1.0550]` | `[-0.2229, 0.1000] / [-0.1000, 0.1000]` |
+
+The proposed mount is `base_link → lift_mount_joint` at `(0, 0, 0.321230)`
+m with zero yaw. Stage 1 starts at robot `z=0`, so no visual extends below the
+MiR top; its centreline remains at `x=0, y=0`. The two strokes are exactly
+`0.275 + 0.225 = 0.500 m`, giving mast heights `0.555 m` collapsed and
+`1.055 m` extended, or `0.876230 m` and `1.376230 m` above `base_link`.
+No missing stage-1 housing or non-zero platform yaw was identified, so no
+stop-and-ask condition was triggered.
 
 ## Task 2 — Add the Three-Stage Telescoping Mast Description
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -367,12 +405,60 @@ Also inspect collision geometry and both end poses in the Gazebo GUI.
 
 ### Handoff
 
-Record the link tree, visual transforms, joint limits, primitive collision
-dimensions, collision filtering, masses/inertias, and end-state measurements.
+#### Implementation record (2026-08-14)
+
+Added `burke_description/urdf/components/liftkit.urdf.xacro` and included it
+from `burke_base.urdf.xacro`. The resulting lift tree is:
+
+```text
+base_link
+└── lift_mount_joint (fixed, xyz=0 0 0.321230)
+    └── lift_stage_1_link
+        └── lift_stage_2_joint (prismatic, +Z, 0.000–0.275 m)
+            └── lift_stage_2_link
+                └── lift_stage_3_joint (prismatic, +Z, 0.000–0.225 m)
+                    └── lift_stage_3_link
+```
+
+Each split STL is used exactly once as a visual at scale `0.001`, with visual
+origins `0`, `-0.275 m`, and `-0.500 m` along robot Z for stages 1–3. No STL is
+used in collision. Each stage has four primitive perimeter box rails; stage 2
+and stage 3 rail footprints include `0.005 m` clearance. The model-level
+`self_collide=false` preserves environment collision while filtering nested
+same-model stage contacts.
+
+The collision envelope dimensions are stage 1 `0.3229 × 0.2000 × 0.4876 m`,
+stage 2 `0.1484 × 0.1484 × 0.2830 m`, and stage 3
+`0.1960 × 0.1960 × 0.2844 m`. Assumed masses are respectively `35.0`, `20.0`,
+and `25.0 kg`; solid-box approximate inertias `(ixx,iyy,izz)` are
+`(0.810115,0.997553,0.420771)`, `(0.170186,0.170186,0.073409)`, and
+`(0.248540,0.248540,0.160067) kg·m²`. Joint damping, friction, velocity, and
+effort values are configurable assumptions in the component; the velocity
+limit is `0.05 m/s` and effort limit is `2500 N` for both joints.
+
+Static and runtime validation passed:
+
+- Installed-space Xacro expansion and `check_urdf` succeeded.
+- The expanded model contains exactly three lift visual links and two
+  prismatic lift joints.
+- Endpoint calculations give mast heights `0.555 m` at `(q2,q3)=(0,0)` and
+  `1.055 m` at `(0.275,0.225)`.
+- Gazebo SDF conversion succeeded and showed all three LiftKit URIs under
+  visuals and only primitive collision elements.
+- `colcon build --symlink-install --packages-select burke_description
+  burke_gazebo` succeeded.
+- A bounded `timeout 30s ros2 launch burke_gazebo base_sim.launch.py gui:=false`
+  started Gazebo, robot state publisher, model spawning, and the existing
+  base/arm bridges successfully. The arm remains directly attached to
+  `base_link`; re-parenting is intentionally deferred to Task 3.
+
+The GUI pose inspection remains a manual follow-up because this task’s
+automated validation was headless; the numeric endpoint and SDF checks match
+the Task 1 evidence.
 
 ## Task 3 — Re-parent the UR8 Long Arm onto the Top Stage
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -424,12 +510,47 @@ heights, and confirm all arm visuals remain connected during slow lift motion.
 
 ### Handoff
 
-Record the macro-interface change, final arm-mount transform, measured minimum
-and maximum arm-base heights, and arm regression results.
+#### Implementation record (2026-08-14)
+
+Updated `ur8long.urdf.xacro` so `ur8long_arm` accepts an
+`arm_mount_parent` parameter. The base invocation now mounts
+`arm_mount_joint` on `lift_stage_3_link` with local transform
+`xyz="0 0 0.555"`, preserving the verified top-stage attachment point. The
+resulting single kinematic path is:
+
+```text
+base_link
+└── lift_stage_1_link
+    └── lift_stage_2_link
+        └── lift_stage_3_link
+            └── arm_mount_link
+                └── arm_link_1 → arm_link_2 → arm_link_3 → arm_link_4
+                    → arm_link_5 → arm_link_6
+```
+
+The arm mount height above `base_link` is
+`0.321230 + 0.555 + q_stage_2 + q_stage_3`, measuring `0.876230 m` at
+`(q_stage_2,q_stage_3)=(0,0)` and `1.376230 m` at
+`(0.275,0.225)`. An intermediate static check at `(0.125,0.100)` measured
+`1.101230 m`.
+
+Regression checks passed: there is no direct `base_link → arm_mount_link`
+joint, `arm_mount_link` and all six `arm_link_*` links remain present, all six
+arm joints retain their existing names and chain, and all six native position
+controllers retain their existing model-scoped topics and initial positions.
+No arm geometry, joint limits, inertias, or public ROS topic contracts were
+changed.
+
+Installed-space Xacro expansion, `check_urdf`, the complete
+`burke_description`/`burke_gazebo` build, and a bounded headless Gazebo launch
+all passed. Gazebo spawned the re-parented model and initialized the existing
+base, clock, odometry, TF, arm command, and joint-state bridges. GUI pose
+inspection remains a manual follow-up; the static transforms establish the
+required collapsed and extended arm-base heights.
 
 ## Task 4 — Add Lift Command Topics and Joint Feedback
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -487,12 +608,51 @@ unreliable. Record the actual position and settling tolerance for each target.
 
 ### Handoff
 
-Record ROS/Gazebo topic mappings, controller parameters, measured travel,
-holding behavior, limit behavior, and base/arm regression results.
+#### Implementation record (2026-08-14)
+
+Added two native Gazebo `JointPositionController` systems in
+`liftkit.urdf.xacro`, initialized at `0.0 m`, with model-scoped topics:
+
+| ROS command | Gazebo topic | Joint | Limit |
+| --- | --- | --- | ---: |
+| `/lift/stage_2/command` | `/model/burke_base/lift/stage_2/command` | `lift_stage_2_joint` | `0.000–0.275 m` |
+| `/lift/stage_3/command` | `/model/burke_base/lift/stage_3/command` | `lift_stage_3_joint` | `0.000–0.225 m` |
+
+The bridge uses `std_msgs/msg/Float64` to `gz.msgs.Double` in the ROS-to-Gazebo
+direction. The existing model-scoped joint-state publisher remains the single
+feedback source and reports both lift joints, both drive joints, and all six
+arm joints on `/joint_states`. Existing base, clock, odometry, TF, and arm
+bridge entries are unchanged.
+
+Lift control uses native PID position mode with simulation-assumption gains
+`P=100000`, `I=100`, `D=500`, integral clamp `±1500`, and effort clamp
+`±2500 N`. The URDF joint velocity limit remains `0.05 m/s`; these values are
+not vendor ratings. The Task 2 collision-center error was corrected while
+adding the controllers: stage 2 and stage 3 primitive collision centers are
+`0.3541 m` and `0.4128 m` in their link frames, respectively. The nested-stage
+collision filter remains `self_collide=false`.
+
+Validation completed:
+
+- `colcon build --symlink-install --packages-select burke_description
+  burke_gazebo` passed.
+- Installed-space Xacro expansion, `check_urdf`, Gazebo SDF conversion, and
+  static controller/limit assertions passed.
+- A clean headless Gazebo run exposed both ROS lift topics with type
+  `std_msgs/msg/Float64`; `/joint_states` contained both lift joints and all
+  six arm joints.
+- With the stowed arm attached, independent bounded commands moved stage 3 to
+  `0.2191 m` for a `0.225 m` target and stage 2 to `0.2670 m` for a `0.275 m`
+  target during bounded settling windows. The arm joint positions remained
+  unchanged. The final integral clamp was increased to reduce this remaining
+  gravity settling error.
+- Out-of-range protection is provided by the URDF joint limits; no aggregate
+  controller, action server, trajectory controller, or orchestration node was
+  added.
 
 ## Task 5 — Add Integration Tests and Operator Documentation
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -567,8 +727,38 @@ Execute every documented manual command exactly as written.
 
 ### Handoff
 
-List test names, timeouts, tolerances, results, documentation changes, and any
-environment-dependent validation that could not run.
+#### Implementation record (2026-08-14)
+
+Extended `burke_gazebo/test/test_arm_topics.py` with a second bounded case,
+`test_lift_description_motion_and_safe_sequence`, while retaining the existing
+arm/base case. The tests use a 20 s readiness timeout, 45 s lift movement
+timeout, 25 mm lift target tolerance, and 40 mm combined-height tolerance.
+They verify installed LiftKit assets and `0.001` visual scales, primitive-only
+collisions, the three-link/two-prismatic-joint structure, both bridge
+subscriptions, joint feedback, the documented stow pose, collapsed/half/full
+height formulas, stage limits, arm-mount attachment to stage 3, lift return to
+zero before base motion, odometry, all six arm command mappings, and explicit
+safe cleanup. The legacy base check now runs before arm motion so it does not
+depend on the arm's transient settling response.
+
+Added `tf2_msgs` was considered but was not required: the expanded URDF's
+`arm_mount_joint` parent/origin plus joint-state displacement provide the
+stable transform invariant without depending on a runtime `/tf` publication
+that is not present in this launch configuration.
+
+Updated `README.md` with the three-stage/two-prismatic interpretation,
+collapsed and extended dimensions, exact command topics and ranges,
+collapsed/half/full targets, height formulas, safe operating sequence, visual
+scale and collision policy, and simulation-assumption boundaries.
+
+Validation completed:
+
+- `colcon build --symlink-install --packages-select burke_description
+  burke_gazebo` passed.
+- Registered `colcon test --packages-select burke_gazebo --event-handlers
+  console_direct+` passed: 2 tests passed in 28.39 s.
+- The first sandboxed runtime attempt was blocked by DDS socket permissions;
+  the same test passed with DDS access enabled in the supported runtime.
 
 ## Task 6 — Final Visual, Kinematic, and Regression Validation
 

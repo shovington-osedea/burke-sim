@@ -7,6 +7,7 @@
   -->
 
   <xacro:macro name="ur8long_arm" params="
+      arm_mount_parent
       arm_mount_z
       kinematics_parameters_file
       joint_limits_parameters_file
@@ -76,7 +77,7 @@
       </inertial>
     </link>
     <joint name="arm_mount_joint" type="fixed">
-      <parent link="base_link"/>
+      <parent link="${arm_mount_parent}"/>
       <child link="arm_mount_link"/>
       <origin xyz="0 0 ${arm_mount_z}" rpy="0 0 0"/>
     </joint>

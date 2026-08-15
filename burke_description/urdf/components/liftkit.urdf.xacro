@@ -1,0 +1,215 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!--
+    Three-stage LiftKit mast. The supplied STL files are millimetre CAD
+    exports in a common, fully extended assembly frame. Stage 1 is fixed to
+    the mobile base in this milestone; Task 3 will re-parent the arm to the
+    top stage.
+
+    All physical values below are simulation assumptions. The supplied CAD
+    does not provide LiftKit mass properties or actuator ratings.
+  -->
+  <xacro:property name="lift_mesh_scale" value="0.001"/>
+  <xacro:property name="lift_mesh_roll" value="${pi / 2}"/>
+  <xacro:property name="lift_mount_yaw" value="0.0"/>
+
+  <!-- CAD-derived scaled envelopes, retained in named properties for review. -->
+  <xacro:property name="stage_1_length" value="0.3229"/>
+  <xacro:property name="stage_1_width" value="0.2000"/>
+  <xacro:property name="stage_1_height" value="0.4876"/>
+  <xacro:property name="stage_2_length" value="0.1484"/>
+  <xacro:property name="stage_2_width" value="0.1484"/>
+  <xacro:property name="stage_2_height" value="0.2830"/>
+  <xacro:property name="stage_3_length" value="0.1960"/>
+  <xacro:property name="stage_3_width" value="0.1960"/>
+  <xacro:property name="stage_3_height" value="0.2844"/>
+  <!-- Collision centres in each link frame after the CAD visual retraction. -->
+  <xacro:property name="stage_2_collision_center_z" value="0.3541"/>
+  <xacro:property name="stage_3_collision_center_z" value="0.4128"/>
+
+  <!-- Five-millimetre clearance keeps the primitive perimeter rails clear of
+       adjacent nested stages while preserving the external envelope. -->
+  <xacro:property name="lift_collision_clearance" value="0.005"/>
+  <xacro:property name="lift_collision_wall" value="0.020"/>
+
+  <!-- Assumed masses: positive values selected only for stable simulation. -->
+  <xacro:property name="stage_1_mass" value="35.0"/>
+  <xacro:property name="stage_2_mass" value="20.0"/>
+  <xacro:property name="stage_3_mass" value="25.0"/>
+
+  <!-- Conservative assumed actuator limits, not vendor ratings. -->
+  <xacro:property name="stage_2_stroke" value="0.275"/>
+  <xacro:property name="stage_3_stroke" value="0.225"/>
+  <xacro:property name="lift_velocity_limit" value="0.05"/>
+  <xacro:property name="lift_effort_limit" value="2500.0"/>
+  <xacro:property name="lift_position_p_gain" value="100000.0"/>
+  <xacro:property name="lift_position_i_gain" value="100.0"/>
+  <xacro:property name="lift_position_d_gain" value="500.0"/>
+  <xacro:property name="lift_position_i_limit" value="1500.0"/>
+  <xacro:property name="lift_joint_damping" value="80.0"/>
+  <xacro:property name="lift_joint_friction" value="2.0"/>
+
+  <xacro:macro name="lift_box_inertia" params="mass length width height">
+    <inertial>
+      <origin xyz="0 0 0"/>
+      <mass value="${mass}"/>
+      <!-- Solid-box approximation based on the scaled CAD envelope. -->
+      <inertia
+        ixx="${mass * (width * width + height * height) / 12}"
+        ixy="0" ixz="0"
+        iyy="${mass * (length * length + height * height) / 12}"
+        iyz="0"
+        izz="${mass * (length * length + width * width) / 12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="lift_perimeter_collision"
+               params="length width height center_z">
+    <!-- Primitive perimeter approximation; no LiftKit STL is used for
+         collision. The central opening avoids locking nested stages. -->
+    <collision name="rail_x_negative">
+      <origin xyz="${-length / 2 + lift_collision_wall / 2} 0 ${center_z}"/>
+      <geometry>
+        <box size="${lift_collision_wall} ${width} ${height}"/>
+      </geometry>
+    </collision>
+    <collision name="rail_x_positive">
+      <origin xyz="${length / 2 - lift_collision_wall / 2} 0 ${center_z}"/>
+      <geometry>
+        <box size="${lift_collision_wall} ${width} ${height}"/>
+      </geometry>
+    </collision>
+    <collision name="rail_y_negative">
+      <origin xyz="0 ${-width / 2 + lift_collision_wall / 2} ${center_z}"/>
+      <geometry>
+        <box size="${length - 2 * lift_collision_wall} ${lift_collision_wall} ${height}"/>
+      </geometry>
+    </collision>
+    <collision name="rail_y_positive">
+      <origin xyz="0 ${width / 2 - lift_collision_wall / 2} ${center_z}"/>
+      <geometry>
+        <box size="${length - 2 * lift_collision_wall} ${lift_collision_wall} ${height}"/>
+      </geometry>
+    </collision>
+  </xacro:macro>
+
+  <xacro:macro name="liftkit_mast" params="parent_link mount_z">
+    <link name="lift_stage_1_link">
+      <visual name="lift_stage_1_visual">
+        <!-- Keep the CAD centreline at raw x=0, z=0; do not centre its
+             asymmetric -X actuator housing AABB. -->
+        <origin xyz="0 0 0" rpy="${lift_mesh_roll} 0 ${lift_mount_yaw}"/>
+        <geometry>
+          <mesh filename="package://burke_description/cad/stl/LIFTKIT_1.stl"
+                scale="${lift_mesh_scale} ${lift_mesh_scale} ${lift_mesh_scale}"/>
+        </geometry>
+        <material name="liftkit_gray"/>
+      </visual>
+      <!-- The asymmetric stage-1 housing is represented by the negative-X
+           rail; the remaining rails bound the mast envelope. -->
+      <xacro:lift_perimeter_collision
+        length="${stage_1_length}" width="${stage_1_width}"
+        height="${stage_1_height}" center_z="${stage_1_height / 2}"/>
+      <xacro:lift_box_inertia mass="${stage_1_mass}"
+        length="${stage_1_length}" width="${stage_1_width}"
+        height="${stage_1_height}"/>
+    </link>
+
+    <joint name="lift_mount_joint" type="fixed">
+      <parent link="${parent_link}"/>
+      <child link="lift_stage_1_link"/>
+      <origin xyz="0 0 ${mount_z}" rpy="0 0 0"/>
+    </joint>
+
+    <link name="lift_stage_2_link">
+      <visual name="lift_stage_2_visual">
+        <!-- Collapsed CAD retraction: -275 mm in the robot +Z frame. -->
+        <origin xyz="0 0 -0.275" rpy="${lift_mesh_roll} 0 0"/>
+        <geometry>
+          <mesh filename="package://burke_description/cad/stl/LIFTKIT_2.stl"
+                scale="${lift_mesh_scale} ${lift_mesh_scale} ${lift_mesh_scale}"/>
+        </geometry>
+        <material name="liftkit_gray"/>
+      </visual>
+      <xacro:lift_perimeter_collision
+        length="${stage_2_length - 2 * lift_collision_clearance}"
+        width="${stage_2_width - 2 * lift_collision_clearance}"
+        height="${stage_2_height}" center_z="${stage_2_collision_center_z}"/>
+      <xacro:lift_box_inertia mass="${stage_2_mass}"
+        length="${stage_2_length}" width="${stage_2_width}"
+        height="${stage_2_height}"/>
+    </link>
+
+    <joint name="lift_stage_2_joint" type="prismatic">
+      <parent link="lift_stage_1_link"/>
+      <child link="lift_stage_2_link"/>
+      <origin xyz="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="0.0" upper="${stage_2_stroke}"
+             effort="${lift_effort_limit}" velocity="${lift_velocity_limit}"/>
+      <dynamics damping="${lift_joint_damping}" friction="${lift_joint_friction}"/>
+    </joint>
+
+    <link name="lift_stage_3_link">
+      <visual name="lift_stage_3_visual">
+        <!-- Collapsed CAD retraction: -500 mm absolute in the robot +Z frame. -->
+        <origin xyz="0 0 -0.500" rpy="${lift_mesh_roll} 0 0"/>
+        <geometry>
+          <mesh filename="package://burke_description/cad/stl/LIFTKIT_3.stl"
+                scale="${lift_mesh_scale} ${lift_mesh_scale} ${lift_mesh_scale}"/>
+        </geometry>
+        <material name="liftkit_gray"/>
+      </visual>
+      <xacro:lift_perimeter_collision
+        length="${stage_3_length - 2 * lift_collision_clearance}"
+        width="${stage_3_width - 2 * lift_collision_clearance}"
+        height="${stage_3_height}" center_z="${stage_3_collision_center_z}"/>
+      <xacro:lift_box_inertia mass="${stage_3_mass}"
+        length="${stage_3_length}" width="${stage_3_width}"
+        height="${stage_3_height}"/>
+    </link>
+
+    <joint name="lift_stage_3_joint" type="prismatic">
+      <parent link="lift_stage_2_link"/>
+      <child link="lift_stage_3_link"/>
+      <origin xyz="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="0.0" upper="${stage_3_stroke}"
+             effort="${lift_effort_limit}" velocity="${lift_velocity_limit}"/>
+      <dynamics damping="${lift_joint_damping}" friction="${lift_joint_friction}"/>
+    </joint>
+
+    <!-- Gazebo's default same-model collision filtering keeps nested stages
+         from colliding with one another while retaining environment contact. -->
+    <gazebo>
+      <self_collide>false</self_collide>
+    </gazebo>
+
+    <!-- Native Gazebo PID position controllers. The URDF joint limits remain
+         the hard travel bounds; gains and effort cap are conservative
+         simulation assumptions selected to hold the attached arm load. -->
+    <xacro:macro name="lift_position_controller" params="joint topic">
+      <gazebo>
+        <plugin filename="gz-sim-joint-position-controller-system" name="gz::sim::systems::JointPositionController">
+          <joint_name>${joint}</joint_name>
+          <topic>${topic}</topic>
+          <initial_position>0.0</initial_position>
+          <p_gain>${lift_position_p_gain}</p_gain>
+          <i_gain>${lift_position_i_gain}</i_gain>
+          <d_gain>${lift_position_d_gain}</d_gain>
+          <i_max>${lift_position_i_limit}</i_max>
+          <i_min>-${lift_position_i_limit}</i_min>
+          <cmd_max>${lift_effort_limit}</cmd_max>
+          <cmd_min>-${lift_effort_limit}</cmd_min>
+        </plugin>
+      </gazebo>
+    </xacro:macro>
+    <xacro:lift_position_controller
+      joint="lift_stage_2_joint"
+      topic="/model/burke_base/lift/stage_2/command"/>
+    <xacro:lift_position_controller
+      joint="lift_stage_3_joint"
+      topic="/model/burke_base/lift/stage_3/command"/>
+
+  </xacro:macro>
+</robot>

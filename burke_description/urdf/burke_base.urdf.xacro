@@ -40,6 +40,7 @@
   <xacro:property name="wheel_mu2" value="0.9"/>
 
   <xacro:include filename="$(find burke_description)/urdf/components/ur8long.urdf.xacro"/>
+  <xacro:include filename="$(find burke_description)/urdf/components/liftkit.urdf.xacro"/>
 
   <!-- Simulation assumptions for the bounded base controller. -->
   <xacro:property name="max_linear_velocity" value="0.5"/>
@@ -51,6 +52,7 @@
   <material name="chassis_blue"><color rgba="0.08 0.22 0.42 1.0"/></material>
   <material name="mir_gray"><color rgba="0.48 0.50 0.53 1.0"/></material>
   <material name="arm_gray"><color rgba="0.72 0.74 0.77 1.0"/></material>
+  <material name="liftkit_gray"><color rgba="0.38 0.42 0.47 1.0"/></material>
   <material name="wheel_black"><color rgba="0.03 0.03 0.03 1.0"/></material>
   <material name="caster_gray"><color rgba="0.35 0.35 0.35 1.0"/></material>
 
@@ -136,8 +138,13 @@
   <xacro:support_caster name="front" x="0.38"/>
   <xacro:support_caster name="rear" x="-0.38"/>
 
+  <!-- Task 2: add the fixed lower stage and two bounded telescoping stages.
+       The arm remains mounted directly to base_link until Task 3. -->
+  <xacro:liftkit_mast parent_link="base_link" mount_z="${mir_visual_height}"/>
+
   <xacro:ur8long_arm
-    arm_mount_z="${mir_visual_height}"
+    arm_mount_parent="lift_stage_3_link"
+    arm_mount_z="0.555"
     kinematics_parameters_file="$(find burke_description)/config/ur8long/default_kinematics.yaml"
     joint_limits_parameters_file="$(find burke_description)/config/ur8long/joint_limits.yaml"
     physical_parameters_file="$(find burke_description)/config/ur8long/physical_parameters.yaml"
