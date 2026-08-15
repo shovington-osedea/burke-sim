@@ -14,12 +14,14 @@
   <test_depend>sensor_msgs</test_depend>
   <test_depend>sensor_msgs_py</test_depend>
   <test_depend>std_msgs</test_depend>
+  <test_depend>python3-yaml</test_depend>
 
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>foxglove_bridge</exec_depend>
   <exec_depend>teleop_twist_keyboard</exec_depend>
   <exec_depend>burke_description</exec_depend>
 

@@ -14,6 +14,9 @@ patterns=(
   'ros_gz_bridge/parameter_bridge'
   'ros_gz_sim/create'
   'robot_state_publisher'
+  # This is the Foxglove executable specifically, not a generic WebSocket
+  # process. It is included because base_sim.launch.py starts it by default.
+  '/foxglove_bridge/foxglove_bridge'
 )
 
 pids=()

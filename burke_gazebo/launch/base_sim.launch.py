@@ -6,6 +6,7 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
@@ -23,6 +24,7 @@ def generate_launch_description():
         resource_roots.append(gazebo_resource_path)
     world_launch = gazebo_share / "launch" / "empty_world.launch.py"
     bridge_config = gazebo_share / "config" / "bridge.yaml"
+    foxglove_config = gazebo_share / "config" / "foxglove_bridge.yaml"
     xacro_file = description_share / "urdf" / "burke_base.urdf.xacro"
 
     robot_description = ParameterValue(Command(["xacro ", str(xacro_file)]), value_type=str)
@@ -36,6 +38,26 @@ def generate_launch_description():
             "gui",
             default_value="true",
             description="Start Gazebo's graphical client.",
+        ),
+        DeclareLaunchArgument(
+            "foxglove",
+            default_value="true",
+            description="Start the read-only Foxglove WebSocket bridge.",
+        ),
+        DeclareLaunchArgument(
+            "foxglove_address",
+            default_value="0.0.0.0",
+            description="Foxglove WebSocket bind address.",
+        ),
+        DeclareLaunchArgument(
+            "foxglove_port",
+            default_value="8765",
+            description="Foxglove WebSocket TCP port.",
+        ),
+        DeclareLaunchArgument(
+            "foxglove_config",
+            default_value=str(foxglove_config),
+            description="Foxglove bridge ROS parameter file.",
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(world_launch)),
@@ -65,6 +87,23 @@ def generate_launch_description():
             executable="parameter_bridge",
             name="ros_gz_bridge",
             parameters=[{"config_file": str(bridge_config)}],
+            output="screen",
+        ),
+        Node(
+            package="foxglove_bridge",
+            executable="foxglove_bridge",
+            name="foxglove_bridge",
+            condition=IfCondition(LaunchConfiguration("foxglove")),
+            parameters=[
+                LaunchConfiguration("foxglove_config"),
+                {
+                    "address": LaunchConfiguration("foxglove_address"),
+                    "port": ParameterValue(
+                        LaunchConfiguration("foxglove_port"),
+                        value_type=int,
+                    ),
+                },
+            ],
             output="screen",
         ),
     ])

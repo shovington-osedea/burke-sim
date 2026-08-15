@@ -22,4 +22,8 @@ ament_add_pytest_test(test_lidar_topics test/test_lidar_topics.py
   TIMEOUT 120
 )
 
+ament_add_pytest_test(test_foxglove_bridge test/test_foxglove_bridge.py
+  TIMEOUT 180
+)
+
 ament_package()

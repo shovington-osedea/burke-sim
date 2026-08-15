@@ -166,7 +166,14 @@ def simulation():
     environment["ROS_LOG_DIR"] = str(log_directory)
     os.environ["ROS_LOG_DIR"] = str(log_directory)
     process = subprocess.Popen(
-        [ros2, "launch", "burke_gazebo", "base_sim.launch.py", "gui:=false"],
+        [
+            ros2,
+            "launch",
+            "burke_gazebo",
+            "base_sim.launch.py",
+            "gui:=false",
+            "foxglove:=false",
+        ],
         cwd=package_root,
         env=environment,
         stdout=subprocess.PIPE,

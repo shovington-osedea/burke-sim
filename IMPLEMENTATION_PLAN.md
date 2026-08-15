@@ -1,352 +1,320 @@
-# Vertical Lift Integration Plan
+# Foxglove Remote UI Integration Plan
 
 ## Objective
 
-Insert the supplied three-stage LiftKit telescoping mast between the MiR1350
-platform and the existing UR8 Long arm:
+Add an opt-in Foxglove connection to the Burk-e ROS 2 simulation running in
+the Ubuntu 24.04 Parallels virtual machine. The completed integration must:
 
-- use `LIFTKIT_1.stl`, `LIFTKIT_2.stl`, and `LIFTKIT_3.stl` as three
-  independent visual links;
-- reproduce the collapsed state in which the upper stages are nested inside
-  the stages below them;
-- reproduce the fully extended state in which the stages are stacked
-  vertically;
-- retain simple primitive collision geometry rather than STL collisions;
-- move the complete UR8 Long arm with the top lift stage;
-- expose the telescoping joints through ROS 2 position-command topics; and
-- preserve the existing MiR drive and six arm command interfaces.
+- run `foxglove_bridge` locally inside the Ubuntu VM;
+- expose the bridge on a configurable TCP address and port, using
+  `0.0.0.0:8765` for direct access from another machine;
+- allow Foxglove Desktop or the Foxglove web application on another machine to
+  connect with `ws://<reachable-vm-or-host-address>:8765`;
+- visualize the robot model, TF, odometry, joint states, and 3D lidar point
+  cloud produced by the existing simulation;
+- avoid requiring ROS 2, Gazebo, or project message packages on the UI machine;
+- keep external access disabled during ordinary simulation launches unless the
+  operator deliberately selects the Foxglove launch;
+- default to a visualization-only interface with no remote command, service,
+  or parameter-write capability;
+- preserve the existing Gazebo, ROS-Gazebo bridge, robot, lidar, arm, lift, and
+  base interfaces; and
+- clearly separate repository changes from Parallels, Ubuntu firewall, host
+  firewall, router, VPN, and client-network configuration.
 
-This file is an implementation plan for sequential sub-agents. It does not
-authorize adding the LiftKit code as part of the planning task.
+The primary scope is a direct connection over a trusted local network. Cloud
+remote access, public Internet exposure, TLS termination, authentication,
+teleoperation, and fleet management are not included unless explicitly
+requested later.
+
+## Architecture
+
+```text
+Gazebo Harmonic
+    |
+    | Gazebo Transport
+    v
+ros_gz_bridge
+    |
+    | ROS 2 Jazzy topics in the Ubuntu VM
+    v
+foxglove_bridge on 0.0.0.0:8765
+    |
+    | Foxglove WebSocket over TCP
+    v
+Parallels virtual network / host firewall / LAN
+    |
+    v
+Foxglove Desktop or Chrome on another machine
+```
+
+The Foxglove UI does not connect to DDS directly. Only the WebSocket bridge
+must be reachable from the UI machine.
 
 ## Existing Baseline
 
 Agents must extend the repository as it exists when their task starts:
 
-- Ubuntu 24.04, ROS 2 Jazzy, and Gazebo Harmonic remain the supported runtime.
-- `burke_description/urdf/burke_base.urdf.xacro` owns the MiR model and invokes
-  the UR8 Long arm macro.
-- `burke_description/urdf/components/ur8long.urdf.xacro` currently fixes
-  `arm_mount_link` directly to `base_link` with `arm_mount_joint`.
-- The MiR visual top is `0.321230 m` above `base_link`.
-- The UR8 Long arm, its six controllers, `/arm/joint_1/command` through
-  `/arm/joint_6/command`, and `/joint_states` already exist.
-- `burke_gazebo/config/bridge.yaml` also preserves `/cmd_vel`, `/odom`, `/tf`,
-  and `/clock`.
+- The supported environment is Ubuntu 24.04, ROS 2 Jazzy, and Gazebo Harmonic
+  running on ARM64 inside Parallels.
+- `burke_gazebo/launch/base_sim.launch.py` starts Gazebo, publishes
+  `robot_description`, spawns `burke_base`, and starts `ros_gz_bridge`.
+- `burke_gazebo/config/bridge.yaml` exposes the simulation topics to ROS 2.
+- The current visualization topics include `/robot_description`, `/tf`,
+  `/clock`, `/odom`, `/joint_states`, and `/lidar/points`.
+- `burke_gazebo/package.xml` does not currently depend on
+  `foxglove_bridge`.
+- `ros-jazzy-foxglove-bridge` is not installed in the current VM. An ARM64
+  package candidate is available from the configured official ROS repository,
+  so the apt package is the preferred installation path.
+- Upstream Foxglove bridge Docker images are documented as Linux AMD64 only;
+  do not introduce Docker for this ARM64 environment when the native Jazzy
+  package is available.
+- `scripts/stop_burke_sim.bash` stops the existing Gazebo and ROS processes but
+  does not currently include the Foxglove bridge.
+- The worktree contains ongoing lidar and simulation changes. Preserve them and
+  do not revert, rewrite, or weaken them as part of this milestone.
 
-The lift must be inserted into the current hierarchy. Do not rebuild the MiR,
-replace the UR kinematics, rename existing arm joints, or change existing topic
-contracts.
+Do not replace `ros_gz_bridge` with Foxglove Bridge. The first bridge converts
+Gazebo messages into ROS 2 messages; Foxglove Bridge then streams selected ROS
+2 messages to the remote UI.
 
-## CAD Evidence and Motion Derivation
+## Connection and Security Defaults
 
-STL files do not encode units. These LiftKit files use the same millimetre CAD
-convention as the supplied UR meshes, so the provisional visual scale is
-`0.001`.
+Use the following initial interface contract:
 
-### Raw bounds
+| Setting | Default | Reason |
+| --- | --- | --- |
+| Launch | Dedicated `foxglove_sim.launch.py` | Avoid exposing a port during ordinary simulation runs |
+| Bind address | `0.0.0.0` | Accept connections on any VM interface when explicitly launched |
+| TCP port | `8765` | Foxglove Bridge default and documented client convention |
+| Client URL | `ws://<reachable-address>:8765` | Direct local-network WebSocket connection |
+| Mode | Visualization only | Do not allow remote control implicitly |
+| Hidden topics | Disabled | Avoid exposing internal topics unnecessarily |
+| Client publishing | Disabled | Prevent remote `/cmd_vel` or joint commands |
+| Services | Disabled | Prevent remote service calls |
+| Parameter writes | Disabled | Prevent remote configuration changes |
+| Assets | Enabled with a narrow allowlist | Allow the 3D panel to retrieve Burk-e meshes |
+| Client count | Enabled | Provide a simple connection diagnostic |
 
-| Asset | Raw minimum `(x,y,z)` | Raw maximum `(x,y,z)` | Raw size `(x,y,z)` | Role |
-| --- | --- | --- | --- | --- |
-| `LIFTKIT_1.stl` | `(-222.9, 0.0, -100.0)` | `(100.0, 487.6, 100.0)` | `(322.9, 487.6, 200.0)` | Bottom stage |
-| `LIFTKIT_2.stl` | `(-74.2, 487.6, -74.2)` | `(74.2, 770.6, 74.2)` | `(148.4, 283.0, 148.4)` | Middle stage |
-| `LIFTKIT_3.stl` | `(-98.0, 770.6, -98.0)` | `(98.0, 1055.0, 98.0)` | `(196.0, 284.4, 196.0)` | Top stage |
-| `LIFTKIT-UR-500-1100-601R.stl` | `(-222.9, 0.0, -100.0)` | `(100.0, 555.0, 100.0)` | `(322.9, 555.0, 200.0)` | Collapsed reference only |
-
-The three split STLs are stored in a common, fully extended assembly frame:
-
-- stage 1 occupies raw lift-axis coordinates `0.0–487.6 mm`;
-- stage 2 occupies `487.6–770.6 mm`; and
-- stage 3 occupies `770.6–1055.0 mm`.
-
-Rigid triangle matching against the collapsed reference produces these
-collapsed transforms without rotation:
-
-| Stage | Translation from extended CAD pose | Collapsed lift-axis range |
-| --- | ---: | ---: |
-| Stage 1 | `0 mm` | `0.0–487.6 mm` |
-| Stage 2 | `-275 mm` | `212.6–495.6 mm` |
-| Stage 3 | `-500 mm` | `270.6–555.0 mm` |
-
-Therefore the CAD-supported telescoping motion is:
-
-- stage 2 travel: `0.275 m` relative to stage 1;
-- stage 3 travel: `0.225 m` relative to stage 2;
-- total lift travel: `0.500 m`;
-- collapsed mast top: `0.555 m` above the lift base; and
-- fully extended mast top: `1.055 m` above the lift base.
-
-The combined STL is a collapsed reference and must not be added as a runtime
-visual, because it would duplicate the three articulated stage visuals.
-
-## Required Design Contract
-
-### Clarification about “three moving parts”
-
-The supplied CAD establishes three mast stages but only two relative
-telescoping motions: stage 1 does not change pose between the extended split
-assembly and the collapsed reference, while stages 2 and 3 retract by `275 mm`
-and `500 mm` in the common assembly frame.
-
-Use the following CAD-grounded interpretation unless the project owner
-explicitly changes it:
-
-- all three STL files are independent links;
-- stage 1 is rigidly mounted to the MiR and is the fixed lower mast stage;
-- stage 2 moves relative to stage 1; and
-- stage 3 moves relative to stage 2.
-
-If stage 1 must also translate relative to the MiR, stop and ask for the
-missing fixed housing geometry, stage-1 stroke, collapsed origin, and extended
-origin. Do not invent a third prismatic travel from the existing files.
-
-### Coordinate convention
-
-- Robot `+Z` is the vertical lift direction.
-- The LiftKit STL lift direction is raw `+Y`.
-- Begin with mesh rotation `rpy=(pi/2, 0, 0)`, which maps raw `+Y` to robot
-  `+Z` and raw `+Z` to robot `-Y`.
-- Retain the CAD mast centreline at raw `x=0`, `z=0`; do not centre the
-  asymmetric stage-1 AABB, because its negative-X extension represents the
-  actuator housing.
-- Mount the lift centreline at `x=0`, `y=0` on the MiR visual top,
-  `z=0.321230 m` in `base_link`.
-- Task 1 must verify the sign of the `pi/2` rotation in the GUI. If the
-  actuator housing faces the wrong platform direction, record and correct only
-  the lift-mount yaw; do not alter the telescoping axis.
-
-### Kinematic hierarchy
-
-Use this stable frame structure:
+Use an explicit topic allowlist. The minimum visualization set is:
 
 ```text
-base_link
-└── lift_mount_joint (fixed at MiR top)
-    └── lift_stage_1_link              # LIFTKIT_1.stl
-        └── lift_stage_2_joint (prismatic +Z, 0.000–0.275 m)
-            └── lift_stage_2_link      # LIFTKIT_2.stl
-                └── lift_stage_3_joint (prismatic +Z, 0.000–0.225 m)
-                    └── lift_stage_3_link  # LIFTKIT_3.stl
-                        └── arm_mount_joint (fixed)
-                            └── arm_mount_link
-                                └── existing six-joint UR8 Long chain
+/clock
+/tf
+/tf_static
+/robot_description
+/odom
+/joint_states
+/lidar/points
+/foxglove_bridge/client_count
 ```
 
-Joint position zero is the fully collapsed mast. The visual origins must use
-the CAD-derived retraction offsets:
+Add another topic only when a documented Foxglove panel needs it. Do not expose
+command topics such as `/cmd_vel`, `/arm/.../command`, or `/lift/.../command`
+under the default profile.
 
-- `lift_stage_1_link`: no lift-axis visual offset;
-- `lift_stage_2_link`: `-0.275 m` along robot `Z` after orienting the mesh;
-- `lift_stage_3_link`: `-0.500 m` along robot `Z` after orienting the mesh.
+Retain only the Foxglove capabilities needed for connection-graph inspection
+and robot-model asset retrieval. Configure `service_whitelist`,
+`param_whitelist`, and `client_topic_whitelist` to match nothing. Restrict
+`asset_uri_allowlist` to the installed `burke_description` resources required
+by `robot_description`; do not allow arbitrary `file://` retrieval.
 
-Because stage 3 is downstream of stage 2, its absolute displacement is
-`q_stage_2 + q_stage_3`. At full extension this is
-`0.275 + 0.225 = 0.500 m`, cancelling the stage-3 visual retraction offset and
-reproducing the supplied extended CAD pose.
+## Network Responsibility Boundary
 
-Fix the arm mount to the top-stage frame so the arm-base height relative to the
-lift base is:
+Repository code can bind the bridge to a TCP socket and prove that it accepts a
+local connection. It cannot guarantee that another physical machine can reach
+that socket.
 
-```text
-arm_base_height = 0.555 + q_stage_2 + q_stage_3
-```
+The current managed environment prevents inspection of network interfaces,
+routes, listening sockets, and system firewall state through its sandbox. It
+also has no access to the Parallels network-mode settings, the host operating
+system firewall, the LAN router, Wi-Fi client-isolation policy, VPN policy, or
+the intended Foxglove client machine. Therefore implementation must not claim
+that port `8765` is externally reachable based only on a successful local
+test.
 
-The arm base therefore ranges from `0.555 m` to `1.055 m` above the LiftKit
-base, or from `0.876230 m` to `1.376230 m` above `base_link` with the current
-MiR geometry.
+The operator owns these external steps:
 
-### Visual and collision geometry
+1. Select the appropriate Parallels networking mode.
+2. Determine the reachable VM or host address.
+3. Add a Parallels port-forwarding rule when NAT/shared networking requires it.
+4. Allow TCP `8765` through Ubuntu and host firewalls when necessary.
+5. Confirm that the client machine and selected address are mutually routable.
+6. Test the port from the client machine.
 
-- Use each stage STL exactly once as visual geometry through an installed
-  `package://burke_description/...` URI.
-- Apply scale `0.001` uniformly.
-- Do not edit, rename, decimate, overwrite, or use the STL files for collision.
-- Keep collision geometry primitive. Prefer a small set of boxes or cylinders
-  per stage over one excessively broad AABB.
-- Derive each collision primitive from the scaled stage bounds and record its
-  centre, dimensions, and clearance margin as named Xacro properties.
-- Collision geometry must follow its stage link during extension and
-  retraction.
-- Adjacent nested stages must not lock or destabilize each other because their
-  simplified collisions overlap. Use Gazebo's supported same-model collision
-  filtering or appropriately hollow/split primitive approximations; do not
-  shrink the external mast envelope so far that environment clearance checks
-  become misleading.
-- Keep external collisions for the lift, arm, MiR, aircraft, and environment.
-- Give every lift link a positive assumed mass and valid inertia derived from
-  its primitive approximation unless verified LiftKit physical data becomes
-  available. Label these values as simulation assumptions.
+Use this routing guide:
 
-### Lift topic contract
+| Parallels/network state | Expected action | Client URL |
+| --- | --- | --- |
+| Bridged VM networking | Use the VM's LAN address | `ws://<VM_LAN_IP>:8765` |
+| Shared/NAT networking with guest reachable from host only | Forward host TCP `8765` to guest TCP `8765` | `ws://<HOST_LAN_IP>:8765` |
+| Host-only networking | Change network mode, add a host proxy/tunnel, or use Foxglove remote access | Depends on chosen route |
+| Same machine as VM | Connect locally for diagnosis | `ws://127.0.0.1:8765` |
+| Different routed network/VPN | Add an approved route or VPN rule | `ws://<ROUTABLE_IP>:8765` |
 
-Keep the first implementation minimal and expose the two physical prismatic
-joints independently. Targets are metres in `std_msgs/msg/Float64`:
+Do not automatically open a broad firewall rule, modify Parallels settings, or
+configure router port forwarding. Provide exact diagnostic evidence and stop
+at this boundary so the user can perform those actions.
 
-| ROS topic | Joint | Valid target |
-| --- | --- | ---: |
-| `/lift/stage_2/command` | `lift_stage_2_joint` | `0.000–0.275 m` |
-| `/lift/stage_3/command` | `lift_stage_3_joint` | `0.000–0.225 m` |
+Direct Foxglove WebSocket connections currently require a Foxglove developer
+seat. If the account cannot open a direct connection, the user must choose
+either an appropriate Foxglove plan or a separately approved remote-access
+design. Foxglove remote access routes outbound through the Foxglove platform
+and can work behind firewalls, but it requires account/device-token setup and
+is not part of this local-LAN implementation.
 
-Use model-scoped Gazebo topics and one native bounded position controller per
-joint. Include both joints in the existing `/joint_states` feedback.
+## Stop-and-Ask Conditions
 
-Do not add an aggregate lift-height node, action server, `ros2_control`, or
-trajectory controller in this milestone. Document the total height formula
-and provide paired command examples for collapsed, half-height, and fully
-extended poses.
+Stop and request direction instead of expanding scope if:
 
-### Motion sequencing and safety rules
+- the UI machine is outside the trusted LAN and no VPN is available;
+- the user wants to expose port `8765` directly to the public Internet;
+- Foxglove must publish commands, call services, modify parameters, or
+  teleoperate the robot;
+- TLS, authentication, a reverse proxy, or certificate management is required;
+- a Foxglove device token or cloud remote access is requested;
+- the direct WebSocket option is unavailable for the user's Foxglove account;
+- port `8765` is already occupied;
+- Parallels is configured in a mode that cannot route or forward to the guest;
+- the external client cannot reach the selected address after local bridge and
+  firewall checks succeed; or
+- lidar bandwidth causes unacceptable simulation or UI performance and the
+  acceptable fidelity reduction is unknown.
 
-- The MiR must be stationary before either lift joint moves.
-- The UR arm must be in the documented stow pose before the lift moves.
-- Do not command arm motion while either lift joint is moving.
-- Do not command base motion until the arm is stowed and the lift is fully
-  collapsed.
-- Lift controllers must start at `0.0 m` and hold the collapsed position under
-  the simulated arm load.
-- Use conservative assumed lift speed and effort limits, documented next to
-  the joints. Do not present them as vendor ratings.
-- A command beyond a joint limit must not move the stage beyond the URDF
-  limit.
-- A future interlock/controller may enforce sequencing automatically. This
-  milestone validates and documents the protocol without adding unrelated
-  orchestration infrastructure.
-
-### Stop-and-ask conditions
-
-An implementation agent must stop and request project-owner input if any of
-these cannot be verified from the CAD or existing model:
-
-- stage 1 is required to move relative to a missing fixed housing;
-- the LiftKit mount is not centred at `x=0`, `y=0` on the MiR;
-- the LiftKit requires a non-zero platform yaw;
-- the arm attachment point differs from the `0.555–1.055 m` top-stage surface;
-- the collapsed or extended stage positions disagree with the reference STL
-  by more than `1 mm` at their mating interfaces;
-- primitive collisions cannot represent the external envelope without
-  blocking valid telescoping motion; or
-- verified masses, centre-of-mass locations, effort limits, or speed limits
-  are required instead of documented simulation assumptions.
-
-Report the measured value, proposed interpretation, and exact missing value in
-the question. Do not silently substitute unverified vendor dimensions.
+Report the observed error, the address and port tested, the test location, and
+the exact external change or authorization required.
 
 ## Agent Working Rules
 
-1. Each agent owns exactly one task and must stop at its allowed boundary.
-2. Read `AGENTS.md`, this plan, the current working tree, and all prerequisite
-   handoffs before editing.
-3. Preserve unrelated user changes and never modify the source STL files.
-4. Confirm prerequisite behavior rather than relying only on plan checkboxes.
-5. Keep physical assumptions configurable and documented near their use.
-6. Validate resources from the installed ROS workspace, not only source paths.
-7. Use bounded waits for every launch, controller, and feedback check.
-8. Obey the stop-and-ask conditions instead of guessing.
-9. Mark only the assigned task complete after all acceptance criteria pass.
-10. Leave a handoff listing changed files, exact transforms and dimensions,
-    commands, results, assumptions, and blockers.
+1. Read `AGENTS.md`, this plan, the current worktree, and prerequisite handoffs
+   before editing.
+2. Preserve ongoing lidar and simulation changes and all existing interfaces.
+3. Keep Foxglove startup opt-in; do not expose a network listener from the
+   ordinary base simulation launch without an explicit launch argument.
+4. Never store account credentials, device tokens, private keys, host-specific
+   addresses, or private network details in the repository.
+5. Default to read-only visualization and least-privilege allowlists.
+6. Use a configurable address and port; do not hard-code a discovered VM IP.
+7. Use bounded waits and a non-default test port for automated tests so a stale
+   process cannot make tests pass or block the normal operator port.
+8. Validate installed package resources, not only source-tree files.
+9. Do not modify firewall, Parallels, router, or remote-machine settings during
+   repository implementation.
+10. Mark a task complete only after its acceptance criteria pass and record
+    exact commands, results, assumptions, and external blockers.
 
 ## Dependency Order
 
 ```text
-Task 1: Verify LiftKit CAD end states and mounting orientation
-    ↓
-Task 2: Add the three-stage telescoping mast description
-    ↓
-Task 3: Re-parent the UR8 Long arm onto the top stage
-    ↓
-Task 4: Add lift command topics and feedback
-    ↓
-Task 5: Add integration tests and operator documentation
-    ↓
-Task 6: Perform final visual, kinematic, and regression validation
+Task 1: Install and prove the native Foxglove Bridge locally
+    |
+    v
+Task 2: Add a secure opt-in launch and bridge configuration
+    |
+    v
+Task 3: Add local automated validation and lifecycle handling
+    |
+    v
+Task 4: Document and hand off Parallels/LAN reachability
+    |
+    v
+Task 5: Validate the UI from another machine
 ```
 
-Do not parallelize these tasks. They share the robot hierarchy, and each
-downstream task depends on transforms validated by the preceding task.
+Tasks 1–3 are repository and VM-local work. Tasks 4–5 require operator access
+to Parallels, firewall settings, and the client machine and cannot be declared
+complete solely from inside the VM.
 
-## Task 1 — Verify LiftKit CAD End States and Mounting Orientation
+## Task 1 — Install and Prove Foxglove Bridge Locally
 
 - [x] Complete
 
 ### Goal
 
-Confirm the CAD-derived collapsed and extended transforms before modifying the
-robot description.
+Confirm that the official ROS 2 Jazzy Foxglove Bridge package works on the
+Ubuntu 24.04 ARM64 VM before changing project launch files.
 
 ### Allowed Scope
 
-- Read-only inspection of the four LiftKit STL files
-- This plan's Task 1 handoff section
-- No Xacro, URDF, CMake, bridge, launch, test, README, or STL changes
+- Read-only environment and package inspection
+- Installation of `ros-jazzy-foxglove-bridge` after normal package-manager
+  approval
+- Temporary logs under `/tmp`
+- This task's handoff section
+- No repository source changes
 
 ### Work
 
-- Recompute binary-STL validity, triangle counts, bounds, and `0.001` scale.
-- Rigidly match each split stage against the collapsed reference.
-- Confirm stage-1 translation `0`, stage-2 translation `-0.275 m`, and stage-3
-  translation `-0.500 m` along the lift axis.
-- Reassemble both end states numerically and verify their total heights are
-  `0.555 m` and `1.055 m`.
-- Confirm that `rpy=(pi/2,0,0)` maps raw `+Y` to robot `+Z`.
-- Produce front, side, and top evidence for both end states.
-- Confirm the centred MiR-top mounting assumption or trigger a stop-and-ask
-  condition.
+1. Source `/opt/ros/jazzy/setup.bash` and the Burk-e workspace.
+2. Install the native apt package:
+
+   ```bash
+   sudo apt update
+   sudo apt install ros-jazzy-foxglove-bridge
+   ```
+
+3. Confirm `ros2 pkg prefix foxglove_bridge` resolves.
+4. Start the existing simulation headlessly.
+5. Start Foxglove Bridge independently on loopback and a temporary port:
+
+   ```bash
+   ros2 launch foxglove_bridge foxglove_bridge_launch.xml \
+     address:=127.0.0.1 port:=8766
+   ```
+
+6. Confirm the process remains alive, reports the expected bind address and
+   port, discovers the required ROS topics, and accepts a local TCP connection.
+7. Connect Foxglove on the same machine when a usable GUI is available; this is
+   optional for the headless smoke test.
+8. Stop the bridge and simulation cleanly and verify the test port is released.
 
 ### Acceptance Criteria
 
-- Every LiftKit STL imports successfully.
-- The split meshes reproduce the collapsed reference within `1 mm` at mating
-  interfaces and a documented surface tolerance elsewhere.
-- The two serial strokes sum to exactly `0.500 m` within numerical tolerance.
-- The proposed mount orientation is explicit and places no visual below the
-  MiR top surface.
-- Any ambiguity about a moving stage 1 is resolved before Task 2.
+- The native Jazzy package installs and resolves on ARM64.
+- Foxglove Bridge starts without schema, DDS, or WebSocket initialization
+  errors.
+- A local client can connect to `127.0.0.1:8766`.
+- The bridge discovers `/robot_description`, `/tf`, `/odom`, `/joint_states`,
+  and `/lidar/points` while the simulation is running.
+- No Docker container, source build, account credential, or external network
+  change is required.
 
 ### Handoff
 
-#### Verification record (2026-08-14)
+- [x] Complete (2026-08-15)
+- Installed `ros-jazzy-foxglove-bridge` version
+  `3.4.1-1noble.20260612.130454` from the configured official ROS 2 apt
+  repository; the installed architecture is `arm64`.
+- `ros2 pkg prefix foxglove_bridge` resolves to `/opt/ros/jazzy` and the
+  installed launch resource is
+  `/opt/ros/jazzy/share/foxglove_bridge/launch/foxglove_bridge_launch.xml`.
+- Independent bridge command:
 
-All four files imported as valid binary STL files. The record below uses the
-raw CAD millimetre coordinates; runtime visuals must apply a uniform `0.001`
-scale.
+  ```bash
+  ros2 launch foxglove_bridge foxglove_bridge_launch.xml \
+    address:=127.0.0.1 port:=8766
+  ```
 
-| Asset | Triangles | Raw bounds min `(x,y,z)` mm | Raw bounds max `(x,y,z)` mm |
-| --- | ---: | --- | --- |
-| `LIFTKIT_1.stl` | 39,572 | `(-222.9, 0.0, -100.0)` | `(100.0, 487.6, 100.0)` |
-| `LIFTKIT_2.stl` | 20,432 | `(-74.2, 487.6, -74.2)` | `(74.2, 770.6, 74.2)` |
-| `LIFTKIT_3.stl` | 17,652 | `(-98.0, 770.6, -98.0)` | `(98.0, 1055.0, 98.0)` |
-| `LIFTKIT-UR-500-1100-601R.stl` | 77,440 | `(-222.9, 0.0, -100.0)` | `(100.0, 555.0, 100.0)` |
+- Integrated headless validation used the existing
+  `ros2 launch burke_gazebo base_sim.launch.py gui:=false` command and the
+  bridge command above. The bridge reported `Server listening on port 8766`;
+  a local TCP client connected successfully.
+- While the simulation was running, the required topics were present:
+  `/robot_description`, `/tf`, `/odom`, `/joint_states`, and `/lidar/points`.
+  `/clock` and `/tf_static` were also present.
+- Temporary logs are stored at `/tmp/burke-task1-bridge.log`,
+  `/tmp/burke-task1-bridge-sim.log`, `/tmp/burke-task1-sim.log`, and under
+  `/tmp/burke-task1-ros-log*`.
+- The bridge shut down cleanly and port `8766` was successfully rebound after
+  cleanup. Gazebo emitted a shutdown-time segmentation-fault message under
+  the managed VM execution path; this is an existing simulation lifecycle
+  observation and did not leave the bridge or test port running.
+- No Docker container, source build, credential, or external network change
+  was used. Foxglove GUI validation was not performed; the headless TCP smoke
+  test is the applicable local proof for this task.
 
-The binary sizes matched the STL record headers exactly (`84 + 50N` bytes).
-Rigid matching against the collapsed reference confirmed the translation-only
-transforms, with no rotation: stage 1 `(0, 0, 0)` mm, stage 2 `(0, -275, 0)`
-mm, and stage 3 `(0, -500, 0)` mm. The split-stage collapsed union has a
-median nearest-vertex deviation of `0.000061 mm` and the 99th percentile is
-`25.648 mm`; the larger outliers are non-coincident interior/trim tessellation
-rather than a mating-interface displacement. The collapsed overlay is
-accepted with this documented non-interface tessellation tolerance; the
-rigid mating-boundary check found no interface displacement over `1 mm`.
-
-For the visual orientation check, `rpy=(pi/2, 0, 0)` maps a raw point
-`(x,y,z)` to robot `(x,-z,y)`. Thus raw `+Y` maps to robot `+Z`, raw `+Z`
-maps to robot `-Y`, and the stage-1 housing remains on the raw/robot `-X`
-side. Numeric front (`x/z`), side (`y/z`), and top (`x/y`) projections are:
-
-| Pose | Front `x/z` m | Side `y/z` m | Top `x/y` m |
-| --- | --- | --- | --- |
-| Collapsed | `[-0.2229, 0.1000] / [0.0000, 0.5550]` | `[-0.1000, 0.1000] / [0.0000, 0.5550]` | `[-0.2229, 0.1000] / [-0.1000, 0.1000]` |
-| Extended | `[-0.2229, 0.1000] / [0.0000, 1.0550]` | `[-0.1000, 0.1000] / [0.0000, 1.0550]` | `[-0.2229, 0.1000] / [-0.1000, 0.1000]` |
-
-The proposed mount is `base_link → lift_mount_joint` at `(0, 0, 0.321230)`
-m with zero yaw. Stage 1 starts at robot `z=0`, so no visual extends below the
-MiR top; its centreline remains at `x=0, y=0`. The two strokes are exactly
-`0.275 + 0.225 = 0.500 m`, giving mast heights `0.555 m` collapsed and
-`1.055 m` extended, or `0.876230 m` and `1.376230 m` above `base_link`.
-No missing stage-1 housing or non-zero platform yaw was identified, so no
-stop-and-ask condition was triggered.
-
-## Task 2 — Add the Three-Stage Telescoping Mast Description
+## Task 2 — Add the Opt-In Foxglove Launch and Configuration
 
 - [x] Complete
 
@@ -356,107 +324,105 @@ Task 1.
 
 ### Goal
 
-Add three independently visualized mast links with two bounded serial
-prismatic joints, without moving the arm from its current parent yet.
+Provide one supported launch command that starts the complete Burk-e simulation
+and a least-privilege Foxglove WebSocket server.
 
 ### Allowed Scope
 
-- A new focused component such as
-  `burke_description/urdf/components/liftkit.urdf.xacro`
-- `burke_description/urdf/burke_base.urdf.xacro`
-- Description install rules only if required for existing CAD resources
-- No arm-macro edits, Gazebo controllers, bridge changes, tests, or README
-  changes
+- New `burke_gazebo/launch/foxglove_sim.launch.py`
+- New `burke_gazebo/config/foxglove_bridge.yaml`
+- `burke_gazebo/package.xml`
+- Minimal launch/config installation corrections in `burke_gazebo/CMakeLists.txt`
+- No robot description, Gazebo world, ROS-Gazebo topic mapping, controller, or
+  sensor changes
 
 ### Work
 
-- Create `lift_stage_1_link`, `lift_stage_2_link`, and `lift_stage_3_link`.
-- Fix stage 1 to the current MiR top through `lift_mount_joint`.
-- Add `lift_stage_2_joint` and `lift_stage_3_joint` with axis `0 0 1` and limits
-  `0–0.275 m` and `0–0.225 m`.
-- Use the exact visual offsets defined in the design contract.
-- Add primitive collisions, assumed masses, inertias, damping, friction,
-  velocity limits, and effort limits as named properties.
-- Ensure nested-stage collision handling does not destabilize the model.
-- Add a fixed, massless `lift_top_mount` frame only if it materially clarifies
-  the arm attachment; do not add a fourth visual mast body.
+1. Add `foxglove_bridge` as an execution dependency.
+2. Create a dedicated launch file that includes `base_sim.launch.py` and starts
+   Foxglove Bridge only from this opt-in entry point.
+3. Declare launch arguments:
+   - `gui`, forwarded to the base simulation;
+   - `foxglove_address`, default `0.0.0.0`;
+   - `foxglove_port`, default `8765`; and
+   - an optional `foxglove_config` path for test overrides.
+4. Load `config/foxglove_bridge.yaml` with `use_sim_time: true`.
+5. Configure the exact topic allowlist from this plan.
+6. Disable client publishing, services, and parameter access with allowlists
+   that match nothing and remove the corresponding capabilities.
+7. Retain connection-graph and asset access only as required by Foxglove's 3D
+   panel.
+8. Restrict assets to `package://burke_description/...` resources and supported
+   robot visual file extensions.
+9. Enable `/foxglove_bridge/client_count` for diagnosis.
+10. Ensure the lidar's best-effort QoS is handled correctly and measure whether
+    default send-buffer and compression settings are sufficient before tuning.
+11. Keep the simulation interfaces unchanged when launched directly; the
+    Foxglove bridge is enabled by default now that the operator has requested
+    default exposure, with `foxglove:=false` available for local opt-out.
+
+### Operator Command
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /home/parallels/ros_ws/install/setup.bash
+ros2 launch burke_gazebo foxglove_sim.launch.py \
+  gui:=false foxglove_address:=0.0.0.0 foxglove_port:=8765
+```
 
 ### Acceptance Criteria
 
-- Xacro expands with exactly three lift visual links and two prismatic joints.
-- Each runtime lift visual references one unique split STL at scale `0.001`.
-- No lift STL is referenced from a collision element.
-- At joint positions `(0,0)`, the mast top is `0.555 m` above its base.
-- At joint positions `(0.275,0.225)`, the mast top is `1.055 m` above its base.
-- Both end states match Task 1's CAD evidence.
-- The mast remains attached and stable while the MiR is stationary.
-
-### Validation
-
-```bash
-xacro src/burke-sim/burke_description/urdf/burke_base.urdf.xacro > /tmp/burke_lift.urdf
-check_urdf /tmp/burke_lift.urdf
-colcon build --symlink-install --packages-select burke_description burke_gazebo
-source install/setup.bash
-timeout 30s ros2 launch burke_gazebo base_sim.launch.py gui:=false
-```
-
-Also inspect collision geometry and both end poses in the Gazebo GUI.
+- The dedicated launch starts Gazebo, the robot, `ros_gz_bridge`, and
+  `foxglove_bridge` together.
+- The server binds the requested address and port.
+- Launching `base_sim.launch.py` directly starts Foxglove Bridge by default;
+  `foxglove:=false` disables it explicitly.
+- The UI can read only the allowlisted topics and required robot assets.
+- A client cannot advertise command topics, invoke services, or modify
+  parameters under the default configuration.
+- No host-specific IP, credential, or secret is checked into the repository.
+- Existing simulation launch and topic behavior remain unchanged.
 
 ### Handoff
 
-#### Implementation record (2026-08-14)
+- [x] Complete (2026-08-15)
+- Changed files:
+  `burke_gazebo/launch/foxglove_sim.launch.py`,
+  `burke_gazebo/config/foxglove_bridge.yaml`, and
+  `burke_gazebo/package.xml`. The existing CMake install rule already installs
+  both `launch` and `config` directories, so no CMake change was required.
+- Launch arguments are `gui` (default `true`), `foxglove_address` (default
+  `0.0.0.0`), `foxglove_port` (default `8765`), and `foxglove_config` (the
+  installed project YAML by default). The launch includes `base_sim.launch.py`
+  and starts Foxglove Bridge only from this dedicated entry point.
+- The default topic regex is
+  `^/(?:clock|tf|tf_static|robot_description|odom|joint_states|lidar/points|foxglove_bridge/client_count)$`.
+  `client_topic_whitelist`, `service_whitelist`, and `param_whitelist` are
+  each `^$`, which matches no usable name. Capabilities are limited to
+  `connectionGraph` and `assets`; hidden topics and sysinfo are disabled.
+- Asset retrieval is limited to
+  `^package://burke_description/cad/stl/[A-Za-z0-9_.%-]+[.]stl$`.
+  Lidar best-effort QoS is explicitly allowed with
+  `^/lidar/points$`; send-buffer and compression defaults were not tuned.
+- Validation command:
 
-Added `burke_description/urdf/components/liftkit.urdf.xacro` and included it
-from `burke_base.urdf.xacro`. The resulting lift tree is:
+  ```bash
+  colcon build --symlink-install --packages-select burke_gazebo
+  ros2 launch burke_gazebo foxglove_sim.launch.py \
+    gui:=false foxglove_address:=127.0.0.1 foxglove_port:=8766
+  ```
 
-```text
-base_link
-└── lift_mount_joint (fixed, xyz=0 0 0.321230)
-    └── lift_stage_1_link
-        └── lift_stage_2_joint (prismatic, +Z, 0.000–0.275 m)
-            └── lift_stage_2_link
-                └── lift_stage_3_joint (prismatic, +Z, 0.000–0.225 m)
-                    └── lift_stage_3_link
-```
+- The installed launch started Gazebo, `ros_gz_bridge`, and Foxglove Bridge;
+  `/foxglove_bridge/client_count` plus all required visualization topics were
+  advertised, and a TCP client connected to the `ws://127.0.0.1:8766` listener.
+  The default `base_sim.launch.py gui:=false` behavior was separately checked
+  on a test port and opened the Foxglove listener.
+- This validates the VM-local listener and policy only. No Parallels, firewall,
+  router, VPN, host-network, credential, or external reachability changes were
+  made. Runtime logs are under `/tmp/burke-task2-foxglove.log` and
+  `/tmp/burke-task2-base.log`.
 
-Each split STL is used exactly once as a visual at scale `0.001`, with visual
-origins `0`, `-0.275 m`, and `-0.500 m` along robot Z for stages 1–3. No STL is
-used in collision. Each stage has four primitive perimeter box rails; stage 2
-and stage 3 rail footprints include `0.005 m` clearance. The model-level
-`self_collide=false` preserves environment collision while filtering nested
-same-model stage contacts.
-
-The collision envelope dimensions are stage 1 `0.3229 × 0.2000 × 0.4876 m`,
-stage 2 `0.1484 × 0.1484 × 0.2830 m`, and stage 3
-`0.1960 × 0.1960 × 0.2844 m`. Assumed masses are respectively `35.0`, `20.0`,
-and `25.0 kg`; solid-box approximate inertias `(ixx,iyy,izz)` are
-`(0.810115,0.997553,0.420771)`, `(0.170186,0.170186,0.073409)`, and
-`(0.248540,0.248540,0.160067) kg·m²`. Joint damping, friction, velocity, and
-effort values are configurable assumptions in the component; the velocity
-limit is `0.05 m/s` and effort limit is `2500 N` for both joints.
-
-Static and runtime validation passed:
-
-- Installed-space Xacro expansion and `check_urdf` succeeded.
-- The expanded model contains exactly three lift visual links and two
-  prismatic lift joints.
-- Endpoint calculations give mast heights `0.555 m` at `(q2,q3)=(0,0)` and
-  `1.055 m` at `(0.275,0.225)`.
-- Gazebo SDF conversion succeeded and showed all three LiftKit URIs under
-  visuals and only primitive collision elements.
-- `colcon build --symlink-install --packages-select burke_description
-  burke_gazebo` succeeded.
-- A bounded `timeout 30s ros2 launch burke_gazebo base_sim.launch.py gui:=false`
-  started Gazebo, robot state publisher, model spawning, and the existing
-  base/arm bridges successfully. The arm remains directly attached to
-  `base_link`; re-parenting is intentionally deferred to Task 3.
-
-The GUI pose inspection remains a manual follow-up because this task’s
-automated validation was headless; the numeric endpoint and SDF checks match
-the Task 1 evidence.
-
-## Task 3 — Re-parent the UR8 Long Arm onto the Top Stage
+## Task 3 — Add Local Tests and Lifecycle Handling
 
 - [x] Complete
 
@@ -466,253 +432,51 @@ Task 2.
 
 ### Goal
 
-Make the complete existing arm move rigidly with `lift_stage_3_link` while
-preserving all arm geometry, kinematics, controllers, and public names.
+Make the Foxglove launch, listener, topic policy, and cleanup behavior
+repeatably verifiable from inside the VM.
 
 ### Allowed Scope
 
-- `burke_description/urdf/components/ur8long.urdf.xacro`
-- The lift component and `burke_base.urdf.xacro` only where required to pass
-  the arm parent and attachment transform
-- Focused static-description validation
-- No arm CAD refit, arm joint-limit change, bridge change, new controller, or
-  README edit
-
-### Work
-
-- Parameterize the UR8 Long macro's mount parent instead of hardcoding
-  `base_link`.
-- Parent `arm_mount_joint` to `lift_stage_3_link` or the verified
-  `lift_top_mount` frame.
-- Replace the old direct MiR mount height with the top-stage attachment pose.
-- Preserve `arm_mount_link`, `arm_joint_1` through `arm_joint_6`, their
-  controllers, initial pose, and existing topic names.
-- Verify the arm-base transform follows
-  `0.555 + q_stage_2 + q_stage_3` relative to the lift base.
-
-### Acceptance Criteria
-
-- There is exactly one kinematic path from `base_link` through all three lift
-  links to the UR arm.
-- The arm base is `0.876230 m` above `base_link` when collapsed and
-  `1.376230 m` above `base_link` when fully extended.
-- All arm links move rigidly with stage 3 during lift travel.
-- Moving a lift joint does not change any arm joint position value.
-- The arm's existing visual alignment, inertias, joint limits, initial pose,
-  six controllers, and public topics remain unchanged.
-- No direct `base_link` to `arm_mount_link` joint remains.
-
-### Validation
-
-Expand the Xacro and inspect the complete parent-child tree. In Gazebo, hold
-the arm at its initial/stow pose, compare collapsed and extended arm-base
-heights, and confirm all arm visuals remain connected during slow lift motion.
-
-### Handoff
-
-#### Implementation record (2026-08-14)
-
-Updated `ur8long.urdf.xacro` so `ur8long_arm` accepts an
-`arm_mount_parent` parameter. The base invocation now mounts
-`arm_mount_joint` on `lift_stage_3_link` with local transform
-`xyz="0 0 0.555"`, preserving the verified top-stage attachment point. The
-resulting single kinematic path is:
-
-```text
-base_link
-└── lift_stage_1_link
-    └── lift_stage_2_link
-        └── lift_stage_3_link
-            └── arm_mount_link
-                └── arm_link_1 → arm_link_2 → arm_link_3 → arm_link_4
-                    → arm_link_5 → arm_link_6
-```
-
-The arm mount height above `base_link` is
-`0.321230 + 0.555 + q_stage_2 + q_stage_3`, measuring `0.876230 m` at
-`(q_stage_2,q_stage_3)=(0,0)` and `1.376230 m` at
-`(0.275,0.225)`. An intermediate static check at `(0.125,0.100)` measured
-`1.101230 m`.
-
-Regression checks passed: there is no direct `base_link → arm_mount_link`
-joint, `arm_mount_link` and all six `arm_link_*` links remain present, all six
-arm joints retain their existing names and chain, and all six native position
-controllers retain their existing model-scoped topics and initial positions.
-No arm geometry, joint limits, inertias, or public ROS topic contracts were
-changed.
-
-Installed-space Xacro expansion, `check_urdf`, the complete
-`burke_description`/`burke_gazebo` build, and a bounded headless Gazebo launch
-all passed. Gazebo spawned the re-parented model and initialized the existing
-base, clock, odometry, TF, arm command, and joint-state bridges. GUI pose
-inspection remains a manual follow-up; the static transforms establish the
-required collapsed and extended arm-base heights.
-
-## Task 4 — Add Lift Command Topics and Joint Feedback
-
-- [x] Complete
-
-### Prerequisite
-
-Task 3.
-
-### Goal
-
-Control both telescoping motions independently from ROS 2 and publish their
-positions through the existing joint-state interface.
-
-### Allowed Scope
-
-- Lift-related Gazebo system blocks
-- `burke_gazebo/config/bridge.yaml`
-- Required package dependency declarations
-- No aggregate controller, arm-controller change, geometry refit, or motion
-  orchestration node
-
-### Work
-
-- Add one bounded native position controller for each prismatic joint.
-- Use model-scoped Gazebo topics and the ROS topics in the design contract.
-- Use conservative assumed velocity/effort parameters that hold the complete
-  arm load without high-speed extension.
-- Initialize and hold both joints at `0.0 m`.
-- Confirm the existing joint-state publisher includes both lift joints and all
-  six arm joints.
-- Verify out-of-range commands cannot exceed URDF travel limits.
-- Preserve all base, arm, clock, odometry, and TF bridge entries.
-
-### Acceptance Criteria
-
-- Both ROS command topics exist as `std_msgs/msg/Float64` inputs.
-- `/joint_states` reports both lift joints in metres.
-- Commands `(0,0)` produce the collapsed state.
-- Commands `(0.275,0.225)` produce the fully extended state.
-- Each command moves only the intended relative stage.
-- The controllers hold position under gravity with the stowed arm attached.
-- Existing MiR and arm topics remain unchanged and operational.
-
-### Validation
-
-```bash
-ros2 topic list -t
-ros2 topic echo --once /joint_states
-ros2 topic pub --once /lift/stage_2/command std_msgs/msg/Float64 "{data: 0.275}"
-ros2 topic pub --once /lift/stage_3/command std_msgs/msg/Float64 "{data: 0.225}"
-ros2 topic echo --once /joint_states
-ros2 topic pub --once /lift/stage_3/command std_msgs/msg/Float64 "{data: 0.0}"
-ros2 topic pub --once /lift/stage_2/command std_msgs/msg/Float64 "{data: 0.0}"
-```
-
-Use repeated bounded publication if bridge discovery makes one-shot delivery
-unreliable. Record the actual position and settling tolerance for each target.
-
-### Handoff
-
-#### Implementation record (2026-08-14)
-
-Added two native Gazebo `JointPositionController` systems in
-`liftkit.urdf.xacro`, initialized at `0.0 m`, with model-scoped topics:
-
-| ROS command | Gazebo topic | Joint | Limit |
-| --- | --- | --- | ---: |
-| `/lift/stage_2/command` | `/model/burke_base/lift/stage_2/command` | `lift_stage_2_joint` | `0.000–0.275 m` |
-| `/lift/stage_3/command` | `/model/burke_base/lift/stage_3/command` | `lift_stage_3_joint` | `0.000–0.225 m` |
-
-The bridge uses `std_msgs/msg/Float64` to `gz.msgs.Double` in the ROS-to-Gazebo
-direction. The existing model-scoped joint-state publisher remains the single
-feedback source and reports both lift joints, both drive joints, and all six
-arm joints on `/joint_states`. Existing base, clock, odometry, TF, and arm
-bridge entries are unchanged.
-
-Lift control uses native PID position mode with simulation-assumption gains
-`P=100000`, `I=100`, `D=500`, integral clamp `±1500`, and effort clamp
-`±2500 N`. The URDF joint velocity limit remains `0.05 m/s`; these values are
-not vendor ratings. The Task 2 collision-center error was corrected while
-adding the controllers: stage 2 and stage 3 primitive collision centers are
-`0.3541 m` and `0.4128 m` in their link frames, respectively. The nested-stage
-collision filter remains `self_collide=false`.
-
-Validation completed:
-
-- `colcon build --symlink-install --packages-select burke_description
-  burke_gazebo` passed.
-- Installed-space Xacro expansion, `check_urdf`, Gazebo SDF conversion, and
-  static controller/limit assertions passed.
-- A clean headless Gazebo run exposed both ROS lift topics with type
-  `std_msgs/msg/Float64`; `/joint_states` contained both lift joints and all
-  six arm joints.
-- With the stowed arm attached, independent bounded commands moved stage 3 to
-  `0.2191 m` for a `0.225 m` target and stage 2 to `0.2670 m` for a `0.275 m`
-  target during bounded settling windows. The arm joint positions remained
-  unchanged. The final integral clamp was increased to reduce this remaining
-  gravity settling error.
-- Out-of-range protection is provided by the URDF joint limits; no aggregate
-  controller, action server, trajectory controller, or orchestration node was
-  added.
-
-## Task 5 — Add Integration Tests and Operator Documentation
-
-- [x] Complete
-
-### Prerequisite
-
-Task 4.
-
-### Goal
-
-Make lift resources, end states, command behavior, and safe transition protocol
-repeatably verifiable.
-
-### Allowed Scope
-
-- `burke_gazebo/test/`
+- New `burke_gazebo/test/test_foxglove_bridge.py`
 - Test registration and test-only dependencies
-- `README.md`
-- Minimal corrections to Tasks 2–4 only when a test proves a defect
-- No new feature, controller architecture, or CAD modification
+- `scripts/stop_burke_sim.bash`
+- `scripts/burke_sim_aliases.bash` only if a Foxglove-specific helper is useful
+- Minimal Task 2 corrections when tests prove a defect
+- No external network or firewall changes
 
 ### Test Requirements
 
-Add or extend bounded headless tests to verify:
+Add bounded tests that:
 
-1. all three installed LiftKit mesh URIs resolve;
-2. no LiftKit STL is used for collision;
-3. the model has three lift links and exactly two lift prismatic joints;
-4. both lift topics and feedback become ready before commands are sent;
-5. the arm is placed in its documented stow pose before lift motion;
-6. `(0,0)` yields a `0.555 m` mast height within tolerance;
-7. an intermediate paired target produces the expected summed height;
-8. `(0.275,0.225)` yields a `1.055 m` mast height within tolerance;
-9. each stage remains within its limit throughout the test;
-10. the arm-link transforms move by the same total lift displacement;
-11. the lift returns to `(0,0)` before any base command;
-12. base odometry and all six arm topic mappings still work; and
-13. cleanup explicitly stops the base and returns lift and arm to safe poses.
+1. verify `foxglove_bridge` resolves from the installed environment;
+2. parse the installed configuration and assert the expected address, test
+   port override, topic allowlist, disabled write paths, and asset restriction;
+3. launch `foxglove_sim.launch.py` headlessly on `127.0.0.1:8766`;
+4. wait for the Foxglove node and required ROS topics with explicit timeouts;
+5. establish a local TCP connection to `127.0.0.1:8766`;
+6. perform a Foxglove WebSocket handshake if it can be done with a stable,
+   packaged dependency; otherwise leave protocol/UI validation to Task 5;
+7. verify `/foxglove_bridge/client_count` changes when a compatible client is
+   connected, when protocol validation is available;
+8. prove that the ordinary `base_sim.launch.py` creates a listener by default
+   and that `foxglove:=false` disables it;
+9. terminate all launched processes and prove the test port can be rebound;
+10. retain all existing arm, lift, base, lidar, and ROS-Gazebo tests; and
+11. use actionable failure messages that distinguish bridge failure from
+    external network reachability.
 
-Every readiness wait, movement wait, and launched process must have a timeout
-and actionable failure message.
-
-### Documentation Requirements
-
-Update the README with:
-
-- the three-stage/two-prismatic-joint interpretation;
-- the collapsed and extended dimensions;
-- lift topic names, units, and ranges;
-- commands for collapsed, half-height, and fully extended poses;
-- the total arm-height formula;
-- the arm-stow/base-stop/lift-motion sequence;
-- the `0.001` scale and primitive-collision policy; and
-- the fact that masses, actuator effort, and speeds are simulation assumptions.
+Update `scripts/stop_burke_sim.bash` so a Foxglove-enabled simulation shutdown
+also terminates the bridge. Keep its scope narrow enough that it does not kill
+unrelated WebSocket applications.
 
 ### Acceptance Criteria
 
-- A clean build and registered headless tests pass in the supported runtime.
-- Tests detect missing assets, crossed topics, incorrect travel, bad end-state
-  heights, arm detachment, and base/arm regressions.
-- README commands exactly match the implemented interface.
-- No GUI, real hardware, vendor controller, or private network is required by
-  automated tests.
+- A clean build and all registered tests pass.
+- Tests use loopback and a non-production port and require no LAN access.
+- A stale bridge cannot make the test pass.
+- Cleanup releases the port and leaves no Foxglove process from the test.
+- Existing tests are not skipped, weakened, or reordered to hide regressions.
+- Test output clearly says that local success does not prove remote reachability.
 
 ### Validation
 
@@ -723,95 +487,188 @@ colcon test --packages-select burke_description burke_gazebo --event-handlers co
 colcon test-result --verbose
 ```
 
-Execute every documented manual command exactly as written.
+### Handoff
+
+- [x] Complete (2026-08-15)
+- Added `burke_gazebo/test/test_foxglove_bridge.py` and registered it in
+  `burke_gazebo/CMakeLists.txt`; added `python3-yaml` as a test dependency.
+- Tests use loopback port `8766` with a 30-second readiness timeout and
+  bounded process cleanup. They parse the installed YAML, verify the package
+  resolves, check the default base launch listener, verify all visualization
+  topics, establish a local TCP connection, and rebind the port after cleanup.
+  A WebSocket protocol handshake was not added because no stable packaged
+  client dependency is required for this local milestone.
+- Existing arm and lidar tests were retained and explicitly opt out with
+  `foxglove:=false` so they do not contend for the production listener while
+  testing unrelated simulation interfaces.
+- `scripts/stop_burke_sim.bash` now stops the specific native
+  `/foxglove_bridge/foxglove_bridge` executable in addition to the existing
+  Gazebo process patterns; it does not target generic WebSocket processes.
+- Validation passed:
+  `colcon build --symlink-install --packages-select burke_gazebo`, complete
+  `colcon test --packages-select burke_gazebo`, and
+  `colcon test-result --verbose` reported `11 tests, 0 errors, 0 failures,
+  0 skipped`. Local success does not prove Parallels, firewall, LAN, or
+  remote Foxglove reachability; those remain deferred to Tasks 4–5.
+
+## Task 4 — Document and Hand Off External Reachability
+
+- [ ] Complete
+
+### Prerequisite
+
+Task 3.
+
+### Goal
+
+Give the user exact, non-destructive steps to make the VM's Foxglove listener
+reachable without changing Parallels or firewall settings automatically.
+
+### Allowed Scope
+
+- `README.md`
+- Optional read-only diagnostic script that prints commands and results without
+  changing networking
+- No firewall rule, Parallels preference, router, VPN, or remote-machine change
+
+### Documentation Requirements
+
+Document:
+
+1. installation of `ros-jazzy-foxglove-bridge`;
+2. the opt-in launch command and every launch argument;
+3. local connection testing with `ws://127.0.0.1:8765`;
+4. how the user can obtain the guest IP with `ip -brief address` and inspect the
+   route with `ip route` outside the managed sandbox;
+5. the bridged, shared/NAT, and host-only Parallels cases from this plan;
+6. how to configure a host-to-guest TCP `8765` port forward in the appropriate
+   Parallels version when shared networking is used;
+7. a narrowly scoped Ubuntu firewall example, such as allowing TCP `8765` only
+   from the intended client IP, while requiring the user to review and run it;
+8. the need to check the host firewall and Wi-Fi/VPN client isolation;
+9. how to test from the remote machine with `nc -vz <address> 8765` or an
+   equivalent TCP client;
+10. the Foxglove connection URL for direct guest and host-forwarded cases;
+11. the difference between local listener success and end-to-end reachability;
+12. the direct-connection account/seat requirement;
+13. the security implications of unencrypted `ws://` and why it is limited to
+    a trusted LAN; and
+14. troubleshooting by failure layer: bridge process, VM listener, Ubuntu
+    firewall, Parallels route/forward, host firewall, LAN, and Foxglove client.
+
+Do not put a discovered private address into committed examples. Use
+`<VM_LAN_IP>`, `<HOST_LAN_IP>`, and `<CLIENT_IP>` placeholders.
+
+### Acceptance Criteria
+
+- A user can identify which Parallels networking case applies.
+- Every network-changing command is clearly labeled as an operator action.
+- The documentation never claims that repository code opened the external
+  path.
+- Troubleshooting identifies the exact boundary at which traffic fails.
+- No broad `0.0.0.0/0` firewall example, credential, or public exposure is
+  recommended.
 
 ### Handoff
 
-#### Implementation record (2026-08-14)
+Report documentation changes, the detected limitation of the managed
+environment, local diagnostic results, and the exact external steps left for
+the user.
 
-Extended `burke_gazebo/test/test_arm_topics.py` with a second bounded case,
-`test_lift_description_motion_and_safe_sequence`, while retaining the existing
-arm/base case. The tests use a 20 s readiness timeout, 45 s lift movement
-timeout, 25 mm lift target tolerance, and 40 mm combined-height tolerance.
-They verify installed LiftKit assets and `0.001` visual scales, primitive-only
-collisions, the three-link/two-prismatic-joint structure, both bridge
-subscriptions, joint feedback, the documented stow pose, collapsed/half/full
-height formulas, stage limits, arm-mount attachment to stage 3, lift return to
-zero before base motion, odometry, all six arm command mappings, and explicit
-safe cleanup. The legacy base check now runs before arm motion so it does not
-depend on the arm's transient settling response.
-
-Added `tf2_msgs` was considered but was not required: the expanded URDF's
-`arm_mount_joint` parent/origin plus joint-state displacement provide the
-stable transform invariant without depending on a runtime `/tf` publication
-that is not present in this launch configuration.
-
-Updated `README.md` with the three-stage/two-prismatic interpretation,
-collapsed and extended dimensions, exact command topics and ranges,
-collapsed/half/full targets, height formulas, safe operating sequence, visual
-scale and collision policy, and simulation-assumption boundaries.
-
-Validation completed:
-
-- `colcon build --symlink-install --packages-select burke_description
-  burke_gazebo` passed.
-- Registered `colcon test --packages-select burke_gazebo --event-handlers
-  console_direct+` passed: 2 tests passed in 28.39 s.
-- The first sandboxed runtime attempt was blocked by DDS socket permissions;
-  the same test passed with DDS access enabled in the supported runtime.
-
-## Task 6 — Final Visual, Kinematic, and Regression Validation
+## Task 5 — Validate Foxglove from Another Machine
 
 - [ ] Complete
 
 ### Prerequisites
 
-Tasks 1–5.
+Tasks 1–4 and user-completed network configuration.
 
 ### Goal
 
-Perform an end-to-end review and correct only defects that prevent the lift
-milestone's acceptance criteria.
+Prove the final experience from the actual Foxglove UI machine without
+expanding the bridge's read-only permissions.
 
-### Allowed Scope
+### User-Provided Inputs
 
-- Inspect the complete milestone.
-- Make minimal corrections within files already touched by Tasks 2–5.
-- No fourth lift stage, aggregate controller, autonomous sequencing, sensor,
-  payload, or unrelated refactor.
+- Confirmation that the client has Foxglove Desktop or Chrome access
+- A Foxglove account/seat that supports the chosen connection type
+- The reachable VM or host address
+- Confirmation that Parallels and firewall configuration is complete
+
+### Work
+
+1. Start the opt-in Foxglove simulation in the VM.
+2. From the UI machine, verify TCP reachability to the chosen address and port.
+3. In Foxglove, select **Foxglove WebSocket** and connect to:
+
+   ```text
+   ws://<reachable-vm-or-host-address>:8765
+   ```
+
+4. Confirm the Topics panel contains only the intended visualization topics.
+5. Configure a 3D panel with `odom` as the initial display frame.
+6. Display the URDF robot model, TF frames, and `/lidar/points`.
+7. Add plots or raw-message panels for `/odom` and `/joint_states`.
+8. Drive the MiR and command the arm/lift locally in the VM; confirm the remote
+   UI updates while remote command publication remains unavailable.
+9. Observe latency, dropped updates, bridge send-buffer warnings, VM CPU/GPU
+   load, and point-cloud responsiveness.
+10. If lidar traffic is excessive, tune bridge compression/buffering or the
+    simulated lidar rate only after recording the bottleneck and preserving the
+    required visualization fidelity.
+11. Disconnect the UI, stop the simulation with the repository cleanup helper,
+    and confirm the connection closes and port is released.
 
 ### Acceptance Criteria
 
-- Clean build and automated tests pass.
-- Installed LiftKit visuals resolve with correct scale and orientation.
-- The collapsed split model matches the combined collapsed reference.
-- Full extension matches the supplied split CAD assembly.
-- The mast top travels exactly `0.500 m` within documented tolerance.
-- Primitive collisions move with their stages, approximate the external
-  envelope, and do not block nesting.
-- The stowed arm remains attached and stable at minimum, intermediate, and
-  maximum lift heights.
-- Lift joints hold position under gravity without unacceptable drift,
-  oscillation, or explosive contact behavior.
-- MiR drive, odometry, TF, clock, all arm topics, all lift topics, and joint
-  feedback remain correct.
-- The arm and lift are collapsed/stowed before base motion.
-- The complete model contains three LiftKit runtime visuals and does not use
-  the combined reference as a duplicate visual.
-- All non-verified physical values remain labeled as assumptions.
-
-### Validation
-
-Run Task 5's full validation, then perform one GUI inspection from front, side,
-top, and close telescoping views. Slowly exercise collapsed, intermediate, and
-fully extended configurations with the arm stowed. Return the lift to zero,
-drive and rotate the MiR, stop it explicitly, and regression-test small arm
-commands. Review Gazebo logs for mesh, inertia, collision, controller, joint,
-bridge, and TF warnings.
+- The remote machine connects without installing ROS 2 or Gazebo.
+- Robot model, TF, odometry, joint states, and 3D lidar data render correctly.
+- Simulation-time updates remain coherent across panels.
+- Remote clients cannot publish motion commands, call services, or modify
+  parameters with the default profile.
+- The UI remains responsive at the documented lidar rate on the intended LAN.
+- Shutdown removes the Foxglove listener and all simulation-owned processes.
+- Any Parallels, firewall, LAN, account, or client restriction is reported as
+  an external blocker rather than hidden by repository changes.
 
 ### Handoff
 
-Report final transforms, travel measurements, visual/collision QA, holding and
-stability observations, base/arm/lift regression results, build/test output,
-remaining warnings, and any check that could not be performed. Mark complete
-only when no required work remains.
+Report the connection path used, address category without committing the
+private address, client type, panels tested, observed latency and resource use,
+read-only policy verification, shutdown result, external settings changed by
+the user, and any remaining blocker.
+
+## Final Validation Commands
+
+Inside the Ubuntu VM:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+cd /home/parallels/ros_ws
+colcon build --symlink-install --packages-select burke_description burke_gazebo
+source install/setup.bash
+ros2 launch burke_gazebo foxglove_sim.launch.py \
+  gui:=false foxglove_address:=0.0.0.0 foxglove_port:=8765
+```
+
+From the remote UI machine, after the user configures routing and firewalls:
+
+```bash
+nc -vz <reachable-vm-or-host-address> 8765
+```
+
+Then connect Foxglove to:
+
+```text
+ws://<reachable-vm-or-host-address>:8765
+```
+
+## Reference Sources
+
+- Foxglove ROS 2 setup and direct connection instructions:
+  <https://docs.foxglove.dev/docs/getting-started/frameworks/ros2>
+- Foxglove Bridge installation, launch, address, port, allowlist, capability,
+  and asset configuration:
+  <https://github.com/foxglove/foxglove-sdk/blob/main/ros/src/foxglove_bridge/README.md>
+- Foxglove direct WebSocket versus managed remote-access behavior:
+  <https://docs.foxglove.dev/docs/visualization/connecting/live>

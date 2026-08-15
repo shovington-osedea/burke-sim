@@ -1,0 +1,41 @@
+# Read-only Foxglove profile for the Burk-e visualization UI.
+#
+# This file is intentionally separate from bridge.yaml: ros_gz_bridge converts
+# Gazebo Transport messages, while foxglove_bridge serves selected ROS 2
+# topics over WebSocket.
+/foxglove_bridge:
+  ros__parameters:
+    use_sim_time: true
+
+    # The UI receives only the topics needed by the default robot-model,
+    # TF, odometry, joint-state, and lidar panels.
+    topic_whitelist:
+      - '^/(?:clock|tf|tf_static|robot_description|odom|joint_states|lidar/points|foxglove_bridge/client_count)$'
+
+    # Empty-match regexes intentionally deny all client-created topics,
+    # parameter access, and service calls.
+    client_topic_whitelist:
+      - '^$'
+    service_whitelist:
+      - '^$'
+    param_whitelist:
+      - '^$'
+
+    capabilities:
+      - connectionGraph
+      - assets
+    include_hidden: false
+
+    # The lidar publisher uses sensor-data/best-effort QoS. Permit that topic
+    # to be bridged without changing the simulation publisher's QoS.
+    best_effort_qos_topic_whitelist:
+      - '^/lidar/points$'
+
+    # The 3D panel needs the robot's STL visuals. Keep retrieval inside the
+    # installed Burk-e description package and its mesh directory.
+    asset_uri_allowlist:
+      - '^package://burke_description/cad/stl/[A-Za-z0-9_.%-]+[.]stl$'
+
+    publish_client_count: true
+    sysinfo: false
+    remote_access: false

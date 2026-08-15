@@ -108,7 +108,14 @@ def simulation():
     environment["GZ_SIM_LOG_DIR"] = str(log_directory / "gazebo")
     environment["LIBGL_ALWAYS_SOFTWARE"] = "true"
     process = subprocess.Popen(
-        ["ros2", "launch", "burke_gazebo", "base_sim.launch.py", "gui:=false"],
+        [
+            "ros2",
+            "launch",
+            "burke_gazebo",
+            "base_sim.launch.py",
+            "gui:=false",
+            "foxglove:=false",
+        ],
         cwd=package_root,
         env=environment,
         stdout=launch_log,
