@@ -28,10 +28,9 @@ The workspace currently contains:
 The current milestone mounts a six-joint UR8 Long description directly on the
 mobile base through a three-stage LiftKit mast. Its nominal kinematics, public joint limits, masses, centres of
 mass, and inertia tensors come from Universal Robots' official ROS 2
-description at the recorded rolling-branch commit. The seven supplied UR8L
-STL parts are visual geometry at a millimetre-to-metre scale of `0.001`;
-inexpensive cylinders
-derived from their bounds remain the collision geometry. The upstream source
+description at the recorded rolling-branch commit. Link-local, metre-scale
+derivatives of the seven supplied UR8L STL parts provide visual geometry;
+inexpensive cylinders derived from their bounds remain the collision geometry. The upstream source
 warns that the nominal 4 kg arm-base mass may be inaccurate, and the mounting
 pose on the provisional mobile platform remains a simulation assumption.
 
@@ -168,12 +167,24 @@ ros2 topic pub --rate 10 /lift/stage_3/command std_msgs/msg/Float64 "{data: 0.11
 ros2 topic echo --once /joint_states
 ```
 
-The LiftKit CAD visuals use the supplied STL files with a `0.001` scale to
-convert millimetres to metres. STL files are deliberately excluded from
-collision geometry; primitive perimeter boxes provide the inexpensive
-simulation collision envelope. Stage masses, the 0.05 m/s stroke-speed cap,
-and the 2500 N·m effort cap are simulation assumptions, not a validated
-hardware model.
+The LiftKit CAD visuals use link-local, metre-scale derivatives of the supplied
+STL files. STL files are deliberately excluded from collision geometry;
+primitive perimeter boxes provide the inexpensive simulation collision
+envelope. Stage masses, the 0.05 m/s stroke-speed cap, and the 2500 N·m effort
+cap are simulation assumptions, not a validated hardware model.
+
+The original CAD exports remain unchanged in `burke_description/cad/stl`.
+Regenerate and verify all derived `*_link.stl` visual assets from the repository
+root with:
+
+```bash
+python3 burke_description/scripts/bake_link_local_meshes.py --write
+python3 burke_description/scripts/bake_link_local_meshes.py
+```
+
+The baking step applies the former URDF scale, rotation, and translation to
+the STL vertices. Consequently the MiR, LiftKit, and UR8L CAD visuals all use
+identity origins and unit scale in the generated robot description.
 
 Operate the mast in this order: stop `/cmd_vel`, return the arm to its stow
 pose `[0, -2.0944, 2.0944, -1.5708, 1.5708, 0]` radians, command the lift while
@@ -309,6 +320,51 @@ If headless rendering is too slow, reduce `horizontal_samples`,
 names unchanged when tuning performance. The generic profile does not provide
 vendor-specific packets, ring timing, intensity calibration, or hardware
 mounting guarantees.
+
+### Foxglove robot-model configuration
+
+Use one URDF custom layer for the robot. Delete older robot-model/URDF layers
+before creating it so saved per-link offsets and transform history cannot be
+reused. Configure the new layer as follows:
+
+| Setting | Value |
+| --- | --- |
+| Source | Topic `/robot_description` |
+| Control mode | Joint states |
+| Joint states | `/joint_states` |
+| Display mode | Visual |
+| Frame prefix | empty |
+| 3D display frame | `odom` |
+| Mesh "up" axis | Z-up |
+
+The Gazebo joint-state publisher supplies all ten movable joints in every
+message: two wheels, two LiftKit stages, and six UR8L joints. Joint-state
+control therefore lets Foxglove perform forward kinematics directly from the
+URDF and avoids dependence on previously cached dynamic transforms. Switch the
+same layer between `Visual` and `Collision` when checking alignment; do not use
+separate layers with different control modes for that comparison.
+
+The mesh up-axis setting is required because STL does not encode an up-axis.
+Burk-e's link-local meshes use ROS coordinates (`+Z` up), while a Foxglove
+panel configured for `Y-up` rotates mesh-backed visuals during loading. URDF
+primitives such as the lidar housing and collision boxes do not pass through
+that mesh conversion, so they can remain correct while every CAD visual is
+misaligned.
+
+Transform control remains available for diagnosing `/tf`, but a newly
+connected client can have no history for the volatile movable-joint transforms.
+The fixed transforms on `/tf_static` are transient-local and do not have that
+limitation. If transform control is required, confirm the live tree first:
+
+```bash
+ros2 run tf2_ros tf2_echo base_footprint arm_link_6
+ros2 topic info /tf --verbose
+ros2 topic info /joint_states --verbose
+```
+
+One simulation should report one `/joint_states` publisher and two expected
+`/tf` publishers: `robot_state_publisher` for robot joints and `ros_gz_bridge`
+for `odom` to `base_footprint`.
 
 ## Runtime validation
 

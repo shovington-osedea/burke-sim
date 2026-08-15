@@ -2,7 +2,7 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
   <!--
     UR8 Long arm using Universal Robots' official rolling configuration data.
-    The visual configuration points at the seven locally supplied STL parts;
+    The seven *_link.stl visual derivatives are metre-scale and link-local;
     collision geometry remains primitive for stable, inexpensive simulation.
   -->
 
@@ -29,9 +29,8 @@
 
     <xacro:macro name="mesh_visual" params="key">
       <xacro:property name="entry" value="${visual_data[key]}"/>
-      <xacro:property name="offset" value="${entry['mesh_offset']}"/>
       <visual>
-        <origin xyz="${offset['x']} ${offset['y']} ${offset['z']}" rpy="${offset['roll']} ${offset['pitch']} ${offset['yaw']}"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
           <mesh filename="package://burke_description/${entry['path']}" scale="${entry['scale']} ${entry['scale']} ${entry['scale']}"/>
         </geometry>

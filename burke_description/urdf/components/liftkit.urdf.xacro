@@ -2,17 +2,13 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
   <!--
     Three-stage LiftKit mast. The supplied STL files are millimetre CAD
-    exports in a common, fully extended assembly frame. Stage 1 is fixed to
-    the mobile base in this milestone; Task 3 will re-parent the arm to the
-    top stage.
+    exports in a common, fully extended assembly frame. The *_link.stl
+    derivatives bake their scale, orientation, and collapsed-stage offsets
+    into metre-scale vertices in each URDF link frame.
 
     All physical values below are simulation assumptions. The supplied CAD
     does not provide LiftKit mass properties or actuator ratings.
   -->
-  <xacro:property name="lift_mesh_scale" value="0.001"/>
-  <xacro:property name="lift_mesh_roll" value="${pi / 2}"/>
-  <xacro:property name="lift_mount_yaw" value="0.0"/>
-
   <!-- CAD-derived scaled envelopes, retained in named properties for review. -->
   <xacro:property name="stage_1_length" value="0.3229"/>
   <xacro:property name="stage_1_width" value="0.2000"/>
@@ -96,12 +92,10 @@
   <xacro:macro name="liftkit_mast" params="parent_link mount_z">
     <link name="lift_stage_1_link">
       <visual name="lift_stage_1_visual">
-        <!-- Keep the CAD centreline at raw x=0, z=0; do not centre its
-             asymmetric -X actuator housing AABB. -->
-        <origin xyz="0 0 0" rpy="${lift_mesh_roll} 0 ${lift_mount_yaw}"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://burke_description/cad/stl/LIFTKIT_1.stl"
-                scale="${lift_mesh_scale} ${lift_mesh_scale} ${lift_mesh_scale}"/>
+          <mesh filename="package://burke_description/cad/stl/LIFTKIT_1_link.stl"
+                scale="1 1 1"/>
         </geometry>
         <material name="liftkit_gray"/>
       </visual>
@@ -123,11 +117,10 @@
 
     <link name="lift_stage_2_link">
       <visual name="lift_stage_2_visual">
-        <!-- Collapsed CAD retraction: -275 mm in the robot +Z frame. -->
-        <origin xyz="0 0 -0.275" rpy="${lift_mesh_roll} 0 0"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://burke_description/cad/stl/LIFTKIT_2.stl"
-                scale="${lift_mesh_scale} ${lift_mesh_scale} ${lift_mesh_scale}"/>
+          <mesh filename="package://burke_description/cad/stl/LIFTKIT_2_link.stl"
+                scale="1 1 1"/>
         </geometry>
         <material name="liftkit_gray"/>
       </visual>
@@ -152,11 +145,10 @@
 
     <link name="lift_stage_3_link">
       <visual name="lift_stage_3_visual">
-        <!-- Collapsed CAD retraction: -500 mm absolute in the robot +Z frame. -->
-        <origin xyz="0 0 -0.500" rpy="${lift_mesh_roll} 0 0"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://burke_description/cad/stl/LIFTKIT_3.stl"
-                scale="${lift_mesh_scale} ${lift_mesh_scale} ${lift_mesh_scale}"/>
+          <mesh filename="package://burke_description/cad/stl/LIFTKIT_3_link.stl"
+                scale="1 1 1"/>
         </geometry>
         <material name="liftkit_gray"/>
       </visual>

@@ -345,21 +345,37 @@ def test_lift_description_motion_and_safe_sequence(simulation) -> None:
         assert arm_mount_joint.find("origin").attrib["xyz"].split()[2] == "0.555"
 
         expected_meshes = {
-            "LIFTKIT_1.stl",
-            "LIFTKIT_2.stl",
-            "LIFTKIT_3.stl",
+            "MiR1350_link.stl",
+            "LIFTKIT_1_link.stl",
+            "LIFTKIT_2_link.stl",
+            "LIFTKIT_3_link.stl",
+            *(f"UR8L_PART_{index}_link.stl" for index in range(1, 8)),
         }
         description_share = Path(get_package_share_directory("burke_description"))
         for mesh_name in expected_meshes:
             assert (description_share / "cad" / "stl" / mesh_name).is_file(), (
-                f"Installed LiftKit mesh is missing: {mesh_name}"
+                f"Installed link-local mesh is missing: {mesh_name}"
             )
-        for link_name in ("lift_stage_1_link", "lift_stage_2_link", "lift_stage_3_link"):
+
+        cad_visual_links = (
+            "base_link",
+            "lift_stage_1_link",
+            "lift_stage_2_link",
+            "lift_stage_3_link",
+            "arm_mount_link",
+            *(f"arm_link_{index}" for index in range(1, 7)),
+        )
+        for link_name in cad_visual_links:
+            visual_origin = links[link_name].find("visual/origin")
             visual_mesh = links[link_name].find("visual/geometry/mesh")
+            assert visual_origin is not None
             assert visual_mesh is not None
-            assert "LIFTKIT" in visual_mesh.attrib["filename"]
-            scale = visual_mesh.attrib["scale"].split()
-            assert scale == ["0.001", "0.001", "0.001"]
+            assert visual_origin.attrib["xyz"].split() == ["0", "0", "0"]
+            assert visual_origin.attrib["rpy"].split() == ["0", "0", "0"]
+            assert visual_mesh.attrib["filename"].endswith("_link.stl")
+            assert [float(value) for value in visual_mesh.attrib["scale"].split()] == [1.0, 1.0, 1.0]
+
+        for link_name in ("lift_stage_1_link", "lift_stage_2_link", "lift_stage_3_link"):
             assert not any(
                 "LIFTKIT" in (element.attrib.get("filename", ""))
                 for element in links[link_name].findall(".//collision//mesh")

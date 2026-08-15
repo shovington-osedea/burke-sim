@@ -7,19 +7,14 @@
   -->
   <!--
     CAD visual assumptions from the Task 1 audit:
-    MiR1350_reduced.stl is a reduced 36,106-triangle mesh with measured bounds
-    0.910000 x 1.350000 x 0.321230 m. It is already in metres, so its scale is
-    1.0. The approved yaw is +pi/2, and the mesh origin is retained; its
-    measured bottom is 0.000230 m below the origin.
+    MiR1350_link.stl is a link-local derivative of the reduced 36,106-triangle
+    source mesh. Its metre scale, approved +pi/2 yaw, and 0.000230 m bottom
+    correction are baked into the vertices so every URDF viewer can use an
+    identity visual transform.
   -->
-  <xacro:property name="mir_stl_scale" value="1.0"/>
   <xacro:property name="mir_visual_length" value="1.350"/>
   <xacro:property name="mir_visual_width" value="0.910"/>
   <xacro:property name="mir_visual_height" value="0.321230"/>
-  <xacro:property name="mir_visual_bottom_offset" value="-0.000230"/>
-  <!-- Cancel the small negative STL minimum so the mesh bottom is at base_link. -->
-  <xacro:property name="mir_visual_z_offset" value="${-mir_visual_bottom_offset}"/>
-  <xacro:property name="mir_mesh_yaw" value="${pi / 2}"/>
 
   <!-- The 5 mm per-side collision clearance is deliberately conservative. -->
   <xacro:property name="chassis_length" value="1.340"/>
@@ -61,11 +56,10 @@
 
   <link name="base_link">
     <visual>
-      <origin xyz="0 0 ${mir_visual_z_offset}" rpy="0 0 ${mir_mesh_yaw}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <!-- The reduced mesh is already in metres. -->
-        <mesh filename="package://burke_description/cad/stl/MiR1350_reduced.stl"
-              scale="${mir_stl_scale} ${mir_stl_scale} ${mir_stl_scale}"/>
+        <mesh filename="package://burke_description/cad/stl/MiR1350_link.stl"
+              scale="1 1 1"/>
       </geometry>
       <material name="mir_gray"/>
     </visual>
