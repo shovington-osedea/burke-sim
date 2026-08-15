@@ -18,4 +18,8 @@ ament_add_pytest_test(test_arm_topics test/test_arm_topics.py
   TIMEOUT 120
 )
 
+ament_add_pytest_test(test_lidar_topics test/test_lidar_topics.py
+  TIMEOUT 120
+)
+
 ament_package()

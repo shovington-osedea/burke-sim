@@ -41,6 +41,7 @@
 
   <xacro:include filename="$(find burke_description)/urdf/components/ur8long.urdf.xacro"/>
   <xacro:include filename="$(find burke_description)/urdf/components/liftkit.urdf.xacro"/>
+  <xacro:include filename="$(find burke_description)/urdf/components/mir_3d_lidar.urdf.xacro"/>
 
   <!-- Simulation assumptions for the bounded base controller. -->
   <xacro:property name="max_linear_velocity" value="0.5"/>
@@ -137,6 +138,20 @@
 
   <xacro:support_caster name="front" x="0.38"/>
   <xacro:support_caster name="rear" x="-0.38"/>
+
+  <!-- Task 1-approved fixed front-deck mount; all values are assumptions. -->
+  <xacro:mir_3d_lidar
+    parent_link="base_link"
+    mount_x="0.400" mount_y="0.000" mount_z="0.381230"
+    mount_roll="0.000" mount_pitch="0.000" mount_yaw="0.000"
+    housing_diameter="0.120" housing_height="0.100" housing_mass="2.000"
+    horizontal_samples="640" horizontal_min_angle="-${pi}"
+    horizontal_max_angle="${pi}"
+    vertical_samples="16" vertical_min_angle="-${15 * pi / 180}"
+    vertical_max_angle="${15 * pi / 180}"
+    update_rate="10.0" min_range="0.20" max_range="50.0"
+    range_resolution="0.010" noise_mean="0.0" noise_stddev="0.010"
+    topic="/model/burke_base/lidar/points" visualize="false"/>
 
   <!-- Task 2: add the fixed lower stage and two bounded telescoping stages.
        The arm remains mounted directly to base_link until Task 3. -->

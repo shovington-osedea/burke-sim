@@ -3,6 +3,22 @@
   <world name="burke_empty">
     <!-- Simulation assumption: fixed Earth gravity and a deterministic 1 kHz
          physics update make the empty-world startup repeatable. -->
+    <!--
+      Keep the core world systems explicit because adding the Sensors system
+      disables Gazebo's implicit default-system insertion. The lidar requires
+      the Ogre renderer even when the GUI is disabled; the launch file selects
+      the project-supported renderer and software-rendering policy.
+    -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre</render_engine>
+    </plugin>
     <gravity>0 0 -9.81</gravity>
     <magnetic_field>6.0e-6 2.3e-5 -4.2e-5</magnetic_field>
     <physics name="burke_physics" type="ode">

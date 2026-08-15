@@ -1,0 +1,109 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!--
+    Generic spinning 3D lidar for the MiR front deck.
+
+    All dimensions, mass properties, and scan values are simulation
+    assumptions. The macro keeps them configurable so a verified sensor
+    profile can replace them without changing the frame or topic contract.
+  -->
+  <material name="mir_lidar_gray">
+    <color rgba="0.16 0.17 0.19 1.0"/>
+  </material>
+
+  <xacro:macro name="mir_3d_lidar"
+               params="
+                 parent_link
+                 mount_x mount_y mount_z
+                 mount_roll mount_pitch mount_yaw
+                 housing_diameter housing_height housing_mass
+                 horizontal_samples horizontal_min_angle horizontal_max_angle
+                 vertical_samples vertical_min_angle vertical_max_angle
+                 update_rate min_range max_range range_resolution
+                 noise_mean noise_stddev topic visualize">
+    <xacro:property name="housing_radius" value="${housing_diameter / 2.0}"/>
+    <xacro:property name="housing_ixx"
+                    value="${housing_mass * (3.0 * housing_radius * housing_radius + housing_height * housing_height) / 12.0}"/>
+    <xacro:property name="housing_izz"
+                    value="${housing_mass * housing_radius * housing_radius / 2.0}"/>
+
+    <!-- The physical housing is centred on the approved Task 1 transform. -->
+    <link name="mir_3d_lidar_link">
+      <visual>
+        <origin xyz="0 0 0"/>
+        <geometry>
+          <cylinder radius="${housing_radius}" length="${housing_height}"/>
+        </geometry>
+        <material name="mir_lidar_gray"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0"/>
+        <geometry>
+          <cylinder radius="${housing_radius}" length="${housing_height}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <origin xyz="0 0 0"/>
+        <mass value="${housing_mass}"/>
+        <!-- Solid-cylinder inertia, with the lidar scan axis along +Z. -->
+        <inertia ixx="${housing_ixx}" ixy="0" ixz="0"
+                 iyy="${housing_ixx}" iyz="0" izz="${housing_izz}"/>
+      </inertial>
+    </link>
+
+    <joint name="mir_3d_lidar_mount_joint" type="fixed">
+      <parent link="${parent_link}"/>
+      <child link="mir_3d_lidar_link"/>
+      <origin xyz="${mount_x} ${mount_y} ${mount_z}"
+              rpy="${mount_roll} ${mount_pitch} ${mount_yaw}"/>
+    </joint>
+
+    <!--
+      Keep the data frame separate from the physical housing link. It is a
+      zero-offset fixed frame, so the scan origin and +Z scan axis remain
+      explicit and stable even if the housing visual is later replaced.
+    -->
+    <link name="mir_3d_lidar_frame"/>
+    <joint name="mir_3d_lidar_frame_joint" type="fixed">
+      <parent link="mir_3d_lidar_link"/>
+      <child link="mir_3d_lidar_frame"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <gazebo reference="mir_3d_lidar_frame">
+      <sensor name="mir_3d_lidar_sensor" type="gpu_lidar">
+        <always_on>true</always_on>
+        <visualize>${visualize}</visualize>
+        <update_rate>${update_rate}</update_rate>
+        <topic>${topic}</topic>
+        <gz_frame_id>mir_3d_lidar_frame</gz_frame_id>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>${horizontal_samples}</samples>
+              <resolution>1</resolution>
+              <min_angle>${horizontal_min_angle}</min_angle>
+              <max_angle>${horizontal_max_angle}</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>${vertical_samples}</samples>
+              <resolution>1</resolution>
+              <min_angle>${vertical_min_angle}</min_angle>
+              <max_angle>${vertical_max_angle}</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>${min_range}</min>
+            <max>${max_range}</max>
+            <resolution>${range_resolution}</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>${noise_mean}</mean>
+            <stddev>${noise_stddev}</stddev>
+          </noise>
+        </lidar>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+</robot>

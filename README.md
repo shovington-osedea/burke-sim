@@ -251,6 +251,65 @@ The simulation launch owns Gazebo, the robot description, spawning, and all
 ROS–Gazebo bridges. Stop it with `Ctrl-C` in the first terminal before
 relaunching; launch shutdown removes the spawned model and bridge processes.
 
+### Front-deck 3D lidar
+
+The generic spinning lidar is an obstacle-observation sensor fixed to the
+MiR1350 front deck. It is separate from the TCP-mounted Gemini depth camera,
+the front/rear obstacle cameras, and the MiR localization cameras. Its frame
+tree is:
+
+```text
+base_link
+└── mir_3d_lidar_mount_joint
+    └── mir_3d_lidar_link
+        └── mir_3d_lidar_frame_joint
+            └── mir_3d_lidar_frame
+```
+
+The approved provisional mount is relative to `base_link`:
+
+```text
+translation: x=0.400 m, y=0.000 m, z=0.381230 m
+rotation:    roll=0, pitch=0, yaw=0
+```
+
+The housing is a primitive cylinder with diameter `0.120 m`, height `0.100 m`,
+and assumed mass `2.0 kg`. The lidar frame is zero-offset from the housing
+link, scans along `+Z`, and remains fixed to the mobile base while the LiftKit
+and arm move.
+
+The initial simulation profile is 640 horizontal samples over `-pi..+pi`, 16
+vertical samples over `-15..+15` degrees, 10 Hz, range `0.20..50.0 m`, range
+resolution `0.010 m`, and Gaussian range noise with mean `0.0 m` and standard
+deviation `0.010 m`. Visualization is disabled by default for headless
+performance. These values and the housing dimensions are simulation
+assumptions, not a commissioned physical lidar model or vendor profile.
+
+The stable ROS interface is `/lidar/points` with type
+`sensor_msgs/msg/PointCloud2`, frame `mir_3d_lidar_frame`, and sensor-data QoS
+(`BEST_EFFORT`, `VOLATILE`). Because the publisher uses sensor-data QoS, use a
+matching subscription when inspecting the cloud:
+
+```bash
+ros2 topic info --verbose /lidar/points
+ros2 topic echo --qos-reliability best_effort --once /lidar/points
+ros2 topic hz --qos-reliability best_effort /lidar/points
+```
+
+The Gazebo source topics are `/model/burke_base/lidar/points` for the native
+range scan and `/model/burke_base/lidar/points/points` for
+`gz.msgs.PointCloudPacked`; only the packed cloud is bridged to ROS. In RViz2,
+add a `PointCloud2` display, select `/lidar/points`, set the Fixed Frame to
+`mir_3d_lidar_frame` (or a connected world frame), and choose a suitable point
+size and decay time.
+
+If headless rendering is too slow, reduce `horizontal_samples`,
+`vertical_samples`, or `update_rate` in the `mir_3d_lidar` instantiation in
+`burke_description/urdf/burke_base.urdf.xacro`. Keep the ROS topic and frame
+names unchanged when tuning performance. The generic profile does not provide
+vendor-specific packets, ring timing, intensity calibration, or hardware
+mounting guarantees.
+
 ## Runtime validation
 
 Run these commands from a fresh terminal after sourcing ROS:

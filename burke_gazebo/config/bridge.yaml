@@ -84,3 +84,12 @@
   ros_type_name: "sensor_msgs/msg/JointState"
   gz_type_name: "gz.msgs.Model"
   direction: GZ_TO_ROS
+
+# Fixed front-deck 3D lidar. The Gazebo topic is scoped to the spawned model;
+# the ROS topic is the stable public PointCloud2 contract.
+- ros_topic_name: "/lidar/points"
+  gz_topic_name: "/model/burke_base/lidar/points/points"
+  ros_type_name: "sensor_msgs/msg/PointCloud2"
+  gz_type_name: "gz.msgs.PointCloudPacked"
+  direction: GZ_TO_ROS
+  qos_profile: SENSOR_DATA
