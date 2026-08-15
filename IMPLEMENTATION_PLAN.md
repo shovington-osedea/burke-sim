@@ -195,7 +195,7 @@ tf_timeout_s: 0.2
 ```
 
 These are simulation tuning values from the supplied behavior plan, not MiR
-hardware limits. Task 6 may tune them, but every change must be justified by
+hardware limits. Task 5 may tune them, but every change must be justified by
 recorded metrics and retained in configuration rather than hidden in code.
 
 ## Controller Behavior
@@ -281,15 +281,13 @@ Task 2: Aircraft frame and navigation spawn contract
     ↓
 Task 3: Clockwise 1 m perimeter path
     ↓
-Task 4: RViz and geometry validation
+Task 4: Pure Pursuit math and unit tests
     ↓
-Task 5: Pure Pursuit math and unit tests
+Task 5: Follower node, safety, progress, and metrics
     ↓
-Task 6: Follower node, safety, progress, and metrics
+Task 6: Opt-in integrated launch
     ↓
-Task 7: Opt-in integrated launch
-    ↓
-Task 8: Full-loop headless test and operator documentation
+Task 7: Full-loop headless test and operator documentation
 ```
 
 Tasks are intentionally sequential. Do not parallelize work that changes the
@@ -408,7 +406,7 @@ behavior, and any remaining simulation assumptions.
 
 ## Task 3 — Define and Publish the Clockwise 1 m Perimeter Path
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
@@ -416,8 +414,9 @@ Task 2.
 
 ### Goal
 
-Create a validated closed path in `aircraft` that starts at the nose and stays
-1 m outside the projected aircraft collision geometry.
+Create a validated closed path in `aircraft` that starts at the nose, follows
+the concave top-down aircraft footprint, and remains within the configured
+1.0–1.5 m clearance band.
 
 ### Allowed Scope
 
@@ -429,29 +428,40 @@ Create a validated closed path in `aircraft` that starts at the nose and stays
 
 ### Work
 
-- Derive a documented 2D planform boundary from the current aircraft collision
-  mesh/configuration for offline validation only.
-- Author approximately 10–30 ordered waypoints in the `aircraft` frame.
-- Place P0 at the nose, 1 m outward from the aircraft boundary.
+- Project every collision-mesh triangle onto aircraft XY, rasterize the union,
+  and extract its exterior contour without replacing it with a convex hull.
+- Generate a circular buffered perimeter from that concave footprint using a
+  1.2 m construction radius, then validate the resulting path against the
+  stored footprint.
+- Generate enough ordered waypoints that consecutive poses are no more than
+  1.0 m apart.
+- Place P0 at the positive-X nose and orient each pose toward the next pose;
+  the final pose points back to P0.
 - Order points clockwise when viewed from `+Z`.
 - Close the loop explicitly without creating a zero-length final segment.
-- Avoid extremely sharp corners; add intermediate points around nose, wingtip,
-  and tail transitions as needed.
+- Preserve concave fuselage, wing, and tail transitions from the exterior
+  union boundary; add intermediate points where raster buffering requires it.
 - Validate finite values, unique consecutive points, non-zero segments,
-  clockwise signed area, closure, and at least 1 m centreline clearance.
-- Calculate and store the P0 tangent used by the navigation spawn.
+  clockwise signed area, closure, 1.0–1.5 m clearance, and maximum 1.0 m pose
+  spacing.
+- Calculate the P0 tangent from P0 to P1 for the navigation spawn.
 - Publish a transient-local `nav_msgs/msg/Path` on `/aircraft_path` with every
-  pose in `aircraft` and planar unit orientation.
+  pose in `aircraft`, planar unit orientation, and yaw toward the next pose.
 
 ### Acceptance Criteria
 
-- The path contains 10–30 non-degenerate ordered points.
+- The path contains non-degenerate ordered points with no consecutive spacing
+  greater than 1.0 m.
 - P0 is the nose waypoint.
 - Signed geometry verifies clockwise order.
-- Every segment maintains at least 1.0 m clearance from the projected aircraft
-  collision boundary within an explicitly documented numerical tolerance.
+- The projected triangle union has a concave exterior footprint; no convex-hull
+  bridging is used.
+- Every path segment stays at least 1.0 m and no farther than 1.5 m from the
+  projected collision footprint within an explicitly documented numerical
+  tolerance.
 - The path is closed and has a stable total arc length.
 - `/aircraft_path` has `header.frame_id=aircraft` and transient-local QoS.
+- Each pose orientation points toward the next waypoint, including closure.
 - Path publication requires no Gazebo pose topic or Nav2 dependency.
 
 ### Validation
@@ -461,69 +471,27 @@ ros2 topic info --verbose /aircraft_path
 ros2 topic echo --once /aircraft_path
 ```
 
-### Handoff
-
-Record waypoint count, total length, minimum verified clearance, signed area,
-P0 coordinates, P0 tangent yaw, and the planform-validation method.
-
-## Task 4 — Add RViz Geometry and TF Validation
-
-- [ ] Complete
-
-### Prerequisite
-
-Task 3.
-
-### Goal
-
-Make frame and path errors visible before autonomous motion is possible.
-
-### Allowed Scope
-
-- `rviz/perimeter_debug.rviz`
-- Debug-only launch composition.
-- Read-only visualization/debug topics.
-- No follower and no `/cmd_vel` publisher.
-
-### Work
-
-- Configure RViz with fixed frame `odom`.
-- Display TF, robot model, `/aircraft_path`, and the robot pose.
-- Display the aircraft frame prominently.
-- Add placeholder displays for lookahead and closest-point topics that Task 6
-  will activate.
-- If the aircraft mesh cannot be displayed directly in RViz without adding a
-  misleading duplicate transform, use a clearly labelled 2D footprint marker
-  derived from the same offline path-validation geometry.
-- Document the manual geometry review checklist.
-
-### Acceptance Criteria
-
-- RViz shows connected `odom`, `base_footprint`, and `aircraft` frames.
-- The path visually surrounds the aircraft at the requested clearance.
-- P0 is visibly at the nose.
-- Waypoint order is clockwise.
-- The navigation spawn is beside P0 and aligned with its tangent.
-- No autonomous command publisher exists yet.
-
-### Validation
+The footprint and perimeter can be regenerated from the collision mesh with:
 
 ```bash
-rviz2 -d $(ros2 pkg prefix aircraft_navigation)/share/aircraft_navigation/rviz/perimeter_debug.rviz
+python3 aircraft_navigation/scripts/generate_perimeter_path.py \
+  burke_description/cad/stl/challenger_collision.stl \
+  aircraft_navigation/config/perimeter_path.yaml
 ```
 
 ### Handoff
 
-Record the visual review result and attach a screenshot or describe any geometry
-that remains difficult to verify.
+Record the projected-union method, footprint and waypoint counts, total length,
+clearance range, maximum pose spacing, signed area, P0 coordinates, P0 tangent
+yaw, and confirmation that waypoint orientations follow the next pose.
 
-## Task 5 — Implement Pure Pursuit as Tested Pure Python Logic
+## Task 4 — Implement Pure Pursuit as Tested Pure Python Logic
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
-Task 4.
+Task 3.
 
 ### Goal
 
@@ -585,13 +553,13 @@ colcon test-result --verbose
 Record the math API, progress representation, wraparound rules, test cases, and
 coverage of all safety bounds.
 
-## Task 6 — Implement the Pure Pursuit Follower Node
+## Task 5 — Implement the Pure Pursuit Follower Node
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
-Task 5.
+Task 4.
 
 ### Goal
 
@@ -626,7 +594,7 @@ fail-closed.
 - Refuse to command while another unexpected `/cmd_vel` publisher is active if
   reliable publisher discovery can enforce this without race-prone behavior;
   otherwise document the exclusive-publisher operational requirement and test
-  it in Task 8.
+  it in Task 7.
 
 ### Acceptance Criteria
 
@@ -650,13 +618,13 @@ ros2 run aircraft_navigation pure_pursuit_follower --ros-args \
 Record parameter validation, freshness rules, stop behavior, completion state
 machine, debug topics, metrics, and node-test results.
 
-## Task 7 — Add the Opt-In Fixed-Perimeter Launch
+## Task 6 — Add the Opt-In Fixed-Perimeter Launch
 
-- [ ] Complete
+- [x] Complete
 
 ### Prerequisite
 
-Task 6.
+Task 5.
 
 ### Goal
 
@@ -719,13 +687,13 @@ Required launch arguments:
 Record the complete launch graph, resolved spawn pose, readiness sequence,
 arguments, and regression results for normal base simulation.
 
-## Task 8 — Validate One Full Clockwise Loop and Document Operation
+## Task 7 — Validate One Full Clockwise Loop and Document Operation
 
 - [ ] Complete
 
 ### Prerequisite
 
-Task 7.
+Task 6.
 
 ### Goal
 

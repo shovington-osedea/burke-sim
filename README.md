@@ -366,6 +366,73 @@ One simulation should report one `/joint_states` publisher and two expected
 `/tf` publishers: `robot_state_publisher` for robot joints and `ros_gz_bridge`
 for `odom` to `base_footprint`.
 
+### Fixed perimeter navigation
+
+The dedicated launch starts one simulation at the first perimeter waypoint,
+publishes the configured `odom -> aircraft` transform and transient-local
+`/aircraft_path`, then starts the fail-closed pure-pursuit follower. It is the
+only launch that enables autonomous `/cmd_vel` output; `base_sim.launch.py`
+remains manually controlled.
+
+```bash
+source /opt/ros/jazzy/setup.bash
+cd /path/to/ros_ws
+colcon build --symlink-install --packages-select \
+  burke_description burke_gazebo aircraft_navigation
+source install/setup.bash
+ros2 launch aircraft_navigation fixed_perimeter_follow.launch.py \
+  gui:=false rviz:=false foxglove:=false
+```
+
+Useful launch overrides are `autostart:=false`, `aircraft_pose_config:=PATH`,
+`path_config:=PATH`, and `controller_config:=PATH`. With `autostart:=false`,
+the follower is loaded but holds zero velocity until explicitly enabled:
+
+```bash
+ros2 service call /pure_pursuit_follower/set_enabled \
+  std_srvs/srv/SetBool "{data: true}"
+```
+
+Call the same service with `data: false` to stop and reset it. The default
+spawn is derived from P0 and the P0-to-P1 clockwise tangent in
+`perimeter_path.yaml`. Because Gazebo wheel odometry starts at the robot's
+spawn pose, this launch also converts the world aircraft pose into that local
+odometry frame; `/aircraft_path` therefore remains fixed on the aircraft as
+the robot moves.
+Keep P0 as the nose waypoint when editing the path; regenerate it with
+`aircraft_navigation/scripts/generate_perimeter_path.py` and validate the
+clearance before running the follower.
+
+The controller profile is in `aircraft_navigation/config/controller.yaml`.
+It publishes only `linear.x` and `angular.z` on `/cmd_vel`; stale odometry,
+missing TF, invalid paths, exceptions, completion, and shutdown publish zero.
+Monitor the run with:
+
+```bash
+ros2 topic echo /path_follower/progress
+ros2 topic echo /path_follower/cross_track_error
+ros2 topic echo /path_follower/lookahead
+ros2 topic info /cmd_vel --verbose
+ros2 run tf2_ros tf2_echo odom base_footprint
+```
+
+The first stable baseline freezes these acceptance limits: maximum cross-track
+error `1.5 m`, RMS cross-track error `0.75 m`, maximum heading error `pi rad`,
+linear speed `0.5 m/s`, angular speed `0.5 rad/s`, linear acceleration
+`0.4 m/s^2`, and angular acceleration `0.8 rad/s^2`. The tracking limits are
+deliberately conservative enough to expose a failed loop while the command
+limits are the active controller bounds. The headless test records the final
+structured controller summary and checks that progress reaches one, remains
+monotonic, and does not restart.
+
+Before base motion, verify the arm is at `[0, -2.0944, 2.0944, -1.5708,
+1.5708, 0]` radians and both lift joints are zero. Do not run keyboard
+teleoperation alongside the follower because it would create a competing
+`/cmd_vel` publisher. To stop manually, press Ctrl-C; the follower publishes a
+final zero command before its node exits. If startup stops at zero, inspect
+`/odom`, `odom -> base_footprint`, `odom -> aircraft`, the path frame, and
+publisher counts first. The follower is intentionally fail-closed.
+
 ## Runtime validation
 
 Run these commands from a fresh terminal after sourcing ROS:

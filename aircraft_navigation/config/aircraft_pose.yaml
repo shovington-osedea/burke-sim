@@ -1,0 +1,12 @@
+aircraft_frame_publisher:
+  ros__parameters:
+    use_sim_time: true
+    parent_frame: odom
+    child_frame: aircraft
+    # Simulation assumptions derived from burke_gazebo/worlds/empty.sdf.
+    # The aircraft frame is at the projected ground-plane centre. Its +X
+    # axis points toward the Challenger nose and +Y points to aircraft left.
+    x: 0.0
+    y: 12.0
+    z: 0.0
+    yaw: 3.141592653589793

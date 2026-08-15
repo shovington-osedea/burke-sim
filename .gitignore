@@ -2,6 +2,7 @@
 build/
 install/
 log/
+.pytest_cache/
 .env
 *.cpython*
 *.DS_STORE

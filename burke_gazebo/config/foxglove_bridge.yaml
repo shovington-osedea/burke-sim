@@ -10,7 +10,7 @@
     # The UI receives only the topics needed by the default robot-model,
     # TF, odometry, joint-state, and lidar panels.
     topic_whitelist:
-      - '^/(?:clock|tf|tf_static|robot_description|odom|joint_states|lidar/points|foxglove_bridge/client_count)$'
+      - '^/(?:clock|tf|tf_static|robot_description|odom|joint_states|lidar/points|aircraft_path|foxglove_bridge/client_count)$'
 
     # Empty-match regexes intentionally deny all client-created topics,
     # parameter access, and service calls.

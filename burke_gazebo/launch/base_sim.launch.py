@@ -16,6 +16,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     gazebo_share = Path(get_package_share_directory("burke_gazebo"))
     description_share = Path(get_package_share_directory("burke_description"))
+    navigation_share = Path(get_package_share_directory("aircraft_navigation"))
     # ros_gz_sim resolves URDF package:// meshes as model:// URIs. Gazebo must
     # therefore search the installed share parent for model/burke_description.
     gazebo_resource_path = os.environ.get("GZ_SIM_RESOURCE_PATH", "")
@@ -26,6 +27,7 @@ def generate_launch_description():
     bridge_config = gazebo_share / "config" / "bridge.yaml"
     foxglove_config = gazebo_share / "config" / "foxglove_bridge.yaml"
     xacro_file = description_share / "urdf" / "burke_base.urdf.xacro"
+    aircraft_pose = navigation_share / "config" / "aircraft_pose.yaml"
 
     robot_description = ParameterValue(Command(["xacro ", str(xacro_file)]), value_type=str)
 
@@ -59,6 +61,39 @@ def generate_launch_description():
             default_value=str(foxglove_config),
             description="Foxglove bridge ROS parameter file.",
         ),
+        DeclareLaunchArgument(
+            "spawn_x",
+            default_value="0.0",
+            description="Initial Burk-e base X position in the world.",
+        ),
+        DeclareLaunchArgument(
+            "spawn_y",
+            default_value="0.0",
+            description="Initial Burk-e base Y position in the world.",
+        ),
+        DeclareLaunchArgument(
+            "spawn_z",
+            default_value="0.0",
+            description="Initial Burk-e base Z position in the world.",
+        ),
+        DeclareLaunchArgument(
+            "spawn_yaw",
+            default_value="0.0",
+            description=(
+                "Initial Burk-e base yaw in the world. Use the future Task 3 "
+                "P0 tangent for navigation-only starts."
+            ),
+        ),
+        DeclareLaunchArgument(
+            "aircraft_frame",
+            default_value="true",
+            description="Publish the configured odom -> aircraft static transform.",
+        ),
+        DeclareLaunchArgument(
+            "aircraft_pose",
+            default_value=str(aircraft_pose),
+            description="Aircraft-frame publisher parameter file.",
+        ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(world_launch)),
             launch_arguments={"gui": LaunchConfiguration("gui")}.items(),
@@ -76,10 +111,24 @@ def generate_launch_description():
             output="screen",
         ),
         Node(
+            package="aircraft_navigation",
+            executable="aircraft_frame_publisher",
+            name="aircraft_frame_publisher",
+            condition=IfCondition(LaunchConfiguration("aircraft_frame")),
+            parameters=[LaunchConfiguration("aircraft_pose")],
+            output="screen",
+        ),
+        Node(
             package="ros_gz_sim",
             executable="create",
             name="spawn_burke_base",
-            arguments=["-topic", "robot_description", "-name", "burke_base", "-x", "0", "-y", "0", "-z", "0"],
+            arguments=[
+                "-topic", "robot_description", "-name", "burke_base",
+                "-x", LaunchConfiguration("spawn_x"),
+                "-y", LaunchConfiguration("spawn_y"),
+                "-z", LaunchConfiguration("spawn_z"),
+                "-Y", LaunchConfiguration("spawn_yaw"),
+            ],
             output="screen",
         ),
         Node(
