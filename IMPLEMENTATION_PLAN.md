@@ -1,322 +1,355 @@
-# Foxglove Remote UI Integration Plan
+# Aircraft-Relative MiR Path Following Implementation Plan
 
 ## Objective
 
-Add an opt-in Foxglove connection to the Burk-e ROS 2 simulation running in
-the Ubuntu 24.04 Parallels virtual machine. The completed integration must:
+Build the first autonomous-motion behavior for the Burk-e simulation:
 
-- run `foxglove_bridge` locally inside the Ubuntu VM;
-- expose the bridge on a configurable TCP address and port, using
-  `0.0.0.0:8765` for direct access from another machine;
-- allow Foxglove Desktop or the Foxglove web application on another machine to
-  connect with `ws://<reachable-vm-or-host-address>:8765`;
-- visualize the robot model, TF, odometry, joint states, and 3D lidar point
-  cloud produced by the existing simulation;
-- avoid requiring ROS 2, Gazebo, or project message packages on the UI machine;
-- keep external access disabled during ordinary simulation launches unless the
-  operator deliberately selects the Foxglove launch;
-- default to a visualization-only interface with no remote command, service,
-  or parameter-write capability;
-- preserve the existing Gazebo, ROS-Gazebo bridge, robot, lidar, arm, lift, and
-  base interfaces; and
-- clearly separate repository changes from Parallels, Ubuntu firewall, host
-  firewall, router, VPN, and client-network configuration.
+> Make the differential-drive MiR complete one clockwise, closed 2D loop whose
+> centreline remains 1 m outside the aircraft geometry, using wheel odometry
+> only and a fixed path expressed in an aircraft-relative frame.
 
-The primary scope is a direct connection over a trusted local network. Cloud
-remote access, public Internet exposure, TLS termination, authentication,
-teleoperation, and fleet management are not included unless explicitly
-requested later.
+The behavior must not use Gazebo model pose, world pose, Nav2, SLAM, an
+occupancy map, or obstacle-aware replanning. The design must allow a future
+aircraft-localization node to replace the manual aircraft transform without
+changing the path publisher or follower.
+
+## Confirmed Decisions
+
+- Implementation language: Python.
+- New ROS package: `aircraft_navigation`, using `ament_python`.
+- Robot pose frame: existing `odom -> base_footprint` wheel-odometry TF.
+- Aircraft frame origin: projected centre of the aircraft.
+- Aircraft frame orientation: `+X` points toward the aircraft nose, `+Y` points
+  to the aircraft's left, and `+Z` points up.
+- Current nominal aircraft pose: centred near `(0, 12)` in the existing world.
+  Because the current mesh nose points toward negative `odom` X, the provisional
+  manual transform is approximately `odom -> aircraft = (x=0, y=12, yaw=pi)`.
+  Task 2 must verify and freeze the exact value from configuration.
+- Path direction: clockwise when viewed from above.
+- Path clearance: path centreline must remain at least `1.0 m` outside the
+  aircraft collision geometry projected onto the ground plane.
+- First path point: at the aircraft nose.
+- Initial robot placement: beside the first nose waypoint and aligned with the
+  clockwise path tangent, so this milestone tests following rather than path
+  acquisition from the current world origin.
+- Runtime behavior: opt-in through a separate
+  `fixed_perimeter_follow.launch.py`; normal `base_sim.launch.py` must not start
+  autonomous motion.
+- First execution: complete exactly one loop, publish zero velocity, and stop.
+
+All geometric values derived from the imported aircraft mesh remain simulation
+assumptions. Do not present them as surveyed aircraft dimensions.
+
+## Existing Baseline to Preserve
+
+The repository already provides:
+
+- ROS 2 Jazzy and Gazebo Harmonic integration;
+- the `burke_description` and `burke_gazebo` packages;
+- a differential-drive MiR base with `+X` forward, `+Y` left, and `+Z` up;
+- `/cmd_vel` as `geometry_msgs/msg/Twist`;
+- `/odom` as `nav_msgs/msg/Odometry`;
+- `/tf` containing `odom -> base_footprint`;
+- a static Challenger aircraft model in `burke_empty`;
+- independent LiftKit and UR8 Long controls;
+- a fixed front-deck 3D lidar; and
+- optional Foxglove visualization.
+
+The new work must preserve those interfaces. It must not modify the base drive
+plugin, replace wheel odometry, or require the lidar for this milestone.
 
 ## Architecture
 
 ```text
-Gazebo Harmonic
-    |
-    | Gazebo Transport
-    v
-ros_gz_bridge
-    |
-    | ROS 2 Jazzy topics in the Ubuntu VM
-    v
-foxglove_bridge on 0.0.0.0:8765
-    |
-    | Foxglove WebSocket over TCP
-    v
-Parallels virtual network / host firewall / LAN
-    |
-    v
-Foxglove Desktop or Chrome on another machine
+aircraft_pose.yaml
+        |
+        v
+manual aircraft frame publisher
+        |
+        v
+odom -----------------------> aircraft
+ |                               |
+ |                               v
+ |                      perimeter_path.yaml
+ |                               |
+ v                               v
+base_footprint             /aircraft_path
+        \                       /
+         \                     /
+          v                   v
+             pure pursuit
+                  |
+                  v
+               /cmd_vel
+                  |
+                  v
+        Gazebo differential drive
+                  |
+                  v
+           wheel odometry only
 ```
 
-The Foxglove UI does not connect to DDS directly. Only the WebSocket bridge
-must be reachable from the UI machine.
+The path follower may consume `/odom` for timestamps and velocity, but it must
+obtain the robot pose and path transforms through TF. It must never subscribe
+to Gazebo model-state, pose, or ground-truth topics.
 
-## Existing Baseline
+## Frame Contract
 
-Agents must extend the repository as it exists when their task starts:
-
-- The supported environment is Ubuntu 24.04, ROS 2 Jazzy, and Gazebo Harmonic
-  running on ARM64 inside Parallels.
-- `burke_gazebo/launch/base_sim.launch.py` starts Gazebo, publishes
-  `robot_description`, spawns `burke_base`, and starts `ros_gz_bridge`.
-- `burke_gazebo/config/bridge.yaml` exposes the simulation topics to ROS 2.
-- The current visualization topics include `/robot_description`, `/tf`,
-  `/clock`, `/odom`, `/joint_states`, and `/lidar/points`.
-- `burke_gazebo/package.xml` does not currently depend on
-  `foxglove_bridge`.
-- `ros-jazzy-foxglove-bridge` is not installed in the current VM. An ARM64
-  package candidate is available from the configured official ROS repository,
-  so the apt package is the preferred installation path.
-- Upstream Foxglove bridge Docker images are documented as Linux AMD64 only;
-  do not introduce Docker for this ARM64 environment when the native Jazzy
-  package is available.
-- `scripts/stop_burke_sim.bash` stops the existing Gazebo and ROS processes but
-  does not currently include the Foxglove bridge.
-- The worktree contains ongoing lidar and simulation changes. Preserve them and
-  do not revert, rewrite, or weaken them as part of this milestone.
-
-Do not replace `ros_gz_bridge` with Foxglove Bridge. The first bridge converts
-Gazebo messages into ROS 2 messages; Foxglove Bridge then streams selected ROS
-2 messages to the remote UI.
-
-## Connection and Security Defaults
-
-Use the following initial interface contract:
-
-| Setting | Default | Reason |
-| --- | --- | --- |
-| Launch | Dedicated `foxglove_sim.launch.py` | Avoid exposing a port during ordinary simulation runs |
-| Bind address | `0.0.0.0` | Accept connections on any VM interface when explicitly launched |
-| TCP port | `8765` | Foxglove Bridge default and documented client convention |
-| Client URL | `ws://<reachable-address>:8765` | Direct local-network WebSocket connection |
-| Mode | Visualization only | Do not allow remote control implicitly |
-| Hidden topics | Disabled | Avoid exposing internal topics unnecessarily |
-| Client publishing | Disabled | Prevent remote `/cmd_vel` or joint commands |
-| Services | Disabled | Prevent remote service calls |
-| Parameter writes | Disabled | Prevent remote configuration changes |
-| Assets | Enabled with a narrow allowlist | Allow the 3D panel to retrieve Burk-e meshes |
-| Client count | Enabled | Provide a simple connection diagnostic |
-
-Use an explicit topic allowlist. The minimum visualization set is:
+Required TF relationships:
 
 ```text
-/clock
-/tf
-/tf_static
-/robot_description
-/odom
-/joint_states
-/lidar/points
-/foxglove_bridge/client_count
+odom
+├── base_footprint
+└── aircraft
 ```
 
-Add another topic only when a documented Foxglove panel needs it. Do not expose
-command topics such as `/cmd_vel`, `/arm/.../command`, or `/lift/.../command`
-under the default profile.
+- `odom -> base_footprint` is produced by the existing differential-drive wheel
+  odometry.
+- `odom -> aircraft` is initially published from `aircraft_pose.yaml`.
+- The path is always stored and published in `aircraft`.
+- The follower transforms path targets into `odom`, then transforms the active
+  lookahead target into `base_footprint` for curvature calculation.
+- No `world`, Gazebo entity, or ground-truth frame may be required by the
+  follower.
 
-Retain only the Foxglove capabilities needed for connection-graph inspection
-and robot-model asset retrieval. Configure `service_whitelist`,
-`param_whitelist`, and `client_topic_whitelist` to match nothing. Restrict
-`asset_uri_allowlist` to the installed `burke_description` resources required
-by `robot_description`; do not allow arbitrary `file://` retrieval.
+## ROS Interface Contract
 
-## Network Responsibility Boundary
+Required inputs:
 
-Repository code can bind the bridge to a TCP socket and prove that it accepts a
-local connection. It cannot guarantee that another physical machine can reach
-that socket.
-
-The current managed environment prevents inspection of network interfaces,
-routes, listening sockets, and system firewall state through its sandbox. It
-also has no access to the Parallels network-mode settings, the host operating
-system firewall, the LAN router, Wi-Fi client-isolation policy, VPN policy, or
-the intended Foxglove client machine. Therefore implementation must not claim
-that port `8765` is externally reachable based only on a successful local
-test.
-
-The operator owns these external steps:
-
-1. Select the appropriate Parallels networking mode.
-2. Determine the reachable VM or host address.
-3. Add a Parallels port-forwarding rule when NAT/shared networking requires it.
-4. Allow TCP `8765` through Ubuntu and host firewalls when necessary.
-5. Confirm that the client machine and selected address are mutually routable.
-6. Test the port from the client machine.
-
-Use this routing guide:
-
-| Parallels/network state | Expected action | Client URL |
+| Topic / TF | Type | Purpose |
 | --- | --- | --- |
-| Bridged VM networking | Use the VM's LAN address | `ws://<VM_LAN_IP>:8765` |
-| Shared/NAT networking with guest reachable from host only | Forward host TCP `8765` to guest TCP `8765` | `ws://<HOST_LAN_IP>:8765` |
-| Host-only networking | Change network mode, add a host proxy/tunnel, or use Foxglove remote access | Depends on chosen route |
-| Same machine as VM | Connect locally for diagnosis | `ws://127.0.0.1:8765` |
-| Different routed network/VPN | Add an approved route or VPN rule | `ws://<ROUTABLE_IP>:8765` |
+| `/odom` | `nav_msgs/msg/Odometry` | Wheel-odometry observation and velocity evidence |
+| `/aircraft_path` | `nav_msgs/msg/Path` | Closed path with `header.frame_id=aircraft` |
+| `odom -> base_footprint` | TF | Robot pose estimate |
+| `odom -> aircraft` | TF | Manual aircraft pose, later replaceable by localization |
 
-Do not automatically open a broad firewall rule, modify Parallels settings, or
-configure router port forwarding. Provide exact diagnostic evidence and stop
-at this boundary so the user can perform those actions.
+Required output:
 
-Direct Foxglove WebSocket connections currently require a Foxglove developer
-seat. If the account cannot open a direct connection, the user must choose
-either an appropriate Foxglove plan or a separately approved remote-access
-design. Foxglove remote access routes outbound through the Foxglove platform
-and can work behind firewalls, but it requires account/device-token setup and
-is not part of this local-LAN implementation.
+| Topic | Type | Constraint |
+| --- | --- | --- |
+| `/cmd_vel` | `geometry_msgs/msg/Twist` | Only `linear.x` and `angular.z` may be non-zero |
 
-## Stop-and-Ask Conditions
+Required debug outputs:
 
-Stop and request direction instead of expanding scope if:
+| Topic | Type | Purpose |
+| --- | --- | --- |
+| `/path_follower/lookahead` | `geometry_msgs/msg/PointStamped` | Active lookahead target |
+| `/path_follower/closest_point` | `geometry_msgs/msg/PointStamped` | Current closest point on the tracked path |
+| `/path_follower/progress` | `std_msgs/msg/Float64` | Monotonic completed-loop fraction in `[0,1]` |
+| `/path_follower/cross_track_error` | `std_msgs/msg/Float64` | Current path error in metres |
 
-- the UI machine is outside the trusted LAN and no VPN is available;
-- the user wants to expose port `8765` directly to the public Internet;
-- Foxglove must publish commands, call services, modify parameters, or
-  teleoperate the robot;
-- TLS, authentication, a reverse proxy, or certificate management is required;
-- a Foxglove device token or cloud remote access is requested;
-- the direct WebSocket option is unavailable for the user's Foxglove account;
-- port `8765` is already occupied;
-- Parallels is configured in a mode that cannot route or forward to the guest;
-- the external client cannot reach the selected address after local bridge and
-  firewall checks succeed; or
-- lidar bandwidth causes unacceptable simulation or UI performance and the
-  acceptable fidelity reduction is unknown.
+Publish `/aircraft_path` with transient-local durability so RViz and late
+subscribers receive the fixed path without requiring republishing.
 
-Report the observed error, the address and port tested, the test location, and
-the exact external change or authorization required.
+## Target Package Layout
+
+```text
+aircraft_navigation/
+├── aircraft_navigation/
+│   ├── __init__.py
+│   ├── aircraft_frame_publisher.py
+│   ├── path_geometry.py
+│   ├── perimeter_path_publisher.py
+│   ├── pure_pursuit.py
+│   └── pure_pursuit_follower.py
+├── config/
+│   ├── aircraft_pose.yaml
+│   ├── controller.yaml
+│   └── perimeter_path.yaml
+├── launch/
+│   └── fixed_perimeter_follow.launch.py
+├── resource/
+│   └── aircraft_navigation
+├── rviz/
+│   └── perimeter_debug.rviz
+├── test/
+│   ├── test_aircraft_frame.py
+│   ├── test_path_geometry.py
+│   ├── test_pure_pursuit.py
+│   ├── test_navigation_interfaces.py
+│   └── test_perimeter_loop.py
+├── package.xml
+├── setup.cfg
+└── setup.py
+```
+
+Add files only in the task that owns them. Do not create empty placeholders.
+
+## Initial Controller Profile
+
+Use the following as named, validated starting values in `controller.yaml`:
+
+```yaml
+control_rate_hz: 20.0
+lookahead_distance_m: 1.0
+nominal_linear_speed_mps: 0.3
+maximum_linear_speed_mps: 0.5
+minimum_linear_speed_mps: 0.05
+maximum_angular_speed_radps: 0.5
+maximum_linear_acceleration_mps2: 0.4
+maximum_angular_acceleration_radps2: 0.8
+completion_tolerance_m: 0.2
+forward_search_window_points: 8
+odom_timeout_s: 0.5
+tf_timeout_s: 0.2
+```
+
+These are simulation tuning values from the supplied behavior plan, not MiR
+hardware limits. Task 6 may tune them, but every change must be justified by
+recorded metrics and retained in configuration rather than hidden in code.
+
+## Controller Behavior
+
+At each control cycle:
+
+1. Confirm fresh `/odom`, valid TF, and a valid closed path.
+2. Transform path geometry from `aircraft` into `odom` using the current
+   `odom -> aircraft` transform.
+3. Find the closest point or segment only within a bounded forward window from
+   the retained progress position.
+4. Advance along path arc length by the configured lookahead distance.
+5. Transform the selected target into `base_footprint`.
+6. For lookahead coordinates `(x_L, y_L)`, calculate:
+
+   ```text
+   L_d² = x_L² + y_L²
+   curvature = 2 * y_L / L_d²
+   angular_velocity = linear_velocity * curvature
+   ```
+
+7. Reduce linear speed as absolute curvature increases.
+8. Clamp linear/angular velocity and acceleration to the active profile.
+9. Publish a Twist with only `linear.x` and `angular.z` populated.
+10. Publish debug targets, progress, and cross-track error.
+11. Detect completion only after monotonic progress traverses one full loop and
+    returns within the configured completion tolerance.
+12. Publish an explicit zero Twist and remain stopped after completion.
+
+The controller must also publish zero velocity when odometry is stale, TF is
+missing, the path is invalid, shutdown begins, or an unhandled exception
+escapes the control update.
 
 ## Agent Working Rules
 
-1. Read `AGENTS.md`, this plan, the current worktree, and prerequisite handoffs
-   before editing.
-2. Preserve ongoing lidar and simulation changes and all existing interfaces.
-3. Keep Foxglove startup opt-in; do not expose a network listener from the
-   ordinary base simulation launch without an explicit launch argument.
-4. Never store account credentials, device tokens, private keys, host-specific
-   addresses, or private network details in the repository.
-5. Default to read-only visualization and least-privilege allowlists.
-6. Use a configurable address and port; do not hard-code a discovered VM IP.
-7. Use bounded waits and a non-default test port for automated tests so a stale
-   process cannot make tests pass or block the normal operator port.
-8. Validate installed package resources, not only source-tree files.
-9. Do not modify firewall, Parallels, router, or remote-machine settings during
-   repository implementation.
-10. Mark a task complete only after its acceptance criteria pass and record
-    exact commands, results, assumptions, and external blockers.
+Each implementation agent must:
+
+1. Read `AGENTS.md`, this plan, and all prerequisite task handoffs.
+2. Execute one task only.
+3. Preserve all existing base, arm, lift, lidar, Foxglove, bridge, and world
+   interfaces unless the task explicitly permits a narrow integration edit.
+4. Use ROS simulation time for every navigation node.
+5. Keep geometry and control math in pure Python functions with no ROS side
+   effects so unit tests can exercise it directly.
+6. Use the system Python associated with ROS 2 Jazzy; do not introduce Conda or
+   an incompatible virtual environment.
+7. Add bounded timeouts to all TF waits, topic waits, controller loops, launch
+   tests, and cleanup.
+8. Never validate path following from Gazebo world/model pose.
+9. Update a task checkbox only after its acceptance criteria and available
+   validation pass.
+10. Leave a handoff with changed files, exact commands, results, tuning values,
+    assumptions, and unresolved blockers.
+
+## Stop-and-Ask Conditions
+
+Stop and ask the project owner before continuing if:
+
+- the imported aircraft nose or centre cannot be verified from the current
+  model configuration;
+- the verified `odom -> aircraft` transform differs materially from the
+  provisional `(0, 12, pi)` contract;
+- the 1 m path centreline cannot be kept outside aircraft collision geometry;
+- the MiR footprint collides with the aircraft while its centre follows the
+  requested 1 m-clearance path;
+- the initial robot placement cannot be made beside the nose waypoint without
+  changing the normal `base_sim.launch.py` default;
+- wheel odometry or `odom -> base_footprint` is unavailable or requires Gazebo
+  ground truth;
+- another `/cmd_vel` publisher remains active during autonomous following;
+- the lift cannot remain collapsed or the arm cannot be placed in its
+  documented stow pose before base motion;
+- a proposed fix would add Nav2, SLAM, a map, ground-truth pose, or obstacle
+  replanning; or
+- completion requires changing an existing public topic or frame contract.
 
 ## Dependency Order
 
 ```text
-Task 1: Install and prove the native Foxglove Bridge locally
-    |
-    v
-Task 2: Add a secure opt-in launch and bridge configuration
-    |
-    v
-Task 3: Add local automated validation and lifecycle handling
-    |
-    v
-Task 4: Document and hand off Parallels/LAN reachability
-    |
-    v
-Task 5: Validate the UI from another machine
+Task 1: Package and baseline odometry proof
+    ↓
+Task 2: Aircraft frame and navigation spawn contract
+    ↓
+Task 3: Clockwise 1 m perimeter path
+    ↓
+Task 4: RViz and geometry validation
+    ↓
+Task 5: Pure Pursuit math and unit tests
+    ↓
+Task 6: Follower node, safety, progress, and metrics
+    ↓
+Task 7: Opt-in integrated launch
+    ↓
+Task 8: Full-loop headless test and operator documentation
 ```
 
-Tasks 1–3 are repository and VM-local work. Tasks 4–5 require operator access
-to Parallels, firewall settings, and the client machine and cannot be declared
-complete solely from inside the VM.
+Tasks are intentionally sequential. Do not parallelize work that changes the
+same package or relies on unverified geometry/TF decisions.
 
-## Task 1 — Install and Prove Foxglove Bridge Locally
+## Task 1 — Scaffold the Package and Prove the Odometry Baseline
 
-- [x] Complete
+- [ ] Complete
 
 ### Goal
 
-Confirm that the official ROS 2 Jazzy Foxglove Bridge package works on the
-Ubuntu 24.04 ARM64 VM before changing project launch files.
+Create the Python package and prove the existing wheel-odometry contract before
+adding autonomous behavior.
 
 ### Allowed Scope
 
-- Read-only environment and package inspection
-- Installation of `ros-jazzy-foxglove-bridge` after normal package-manager
-  approval
-- Temporary logs under `/tmp`
-- This task's handoff section
-- No repository source changes
+- New `aircraft_navigation` package metadata and Python module scaffold.
+- Package-level lint/test configuration.
+- A focused baseline test or diagnostic script.
+- No aircraft TF, path, controller, RViz configuration, or `/cmd_vel` output.
 
 ### Work
 
-1. Source `/opt/ros/jazzy/setup.bash` and the Burk-e workspace.
-2. Install the native apt package:
-
-   ```bash
-   sudo apt update
-   sudo apt install ros-jazzy-foxglove-bridge
-   ```
-
-3. Confirm `ros2 pkg prefix foxglove_bridge` resolves.
-4. Start the existing simulation headlessly.
-5. Start Foxglove Bridge independently on loopback and a temporary port:
-
-   ```bash
-   ros2 launch foxglove_bridge foxglove_bridge_launch.xml \
-     address:=127.0.0.1 port:=8766
-   ```
-
-6. Confirm the process remains alive, reports the expected bind address and
-   port, discovers the required ROS topics, and accepts a local TCP connection.
-7. Connect Foxglove on the same machine when a usable GUI is available; this is
-   optional for the headless smoke test.
-8. Stop the bridge and simulation cleanly and verify the test port is released.
+- Create an `ament_python` package with explicit dependencies on `rclpy`,
+  `geometry_msgs`, `nav_msgs`, `std_msgs`, `tf2_ros`, and ROS launch tooling.
+- Confirm `/odom` uses `frame_id=odom` and `child_frame_id=base_footprint`.
+- Confirm TF contains `odom -> base_footprint` and tracks the same translation
+  and yaw as `/odom` while keyboard commands move the base.
+- Confirm no Gazebo pose/model-state topic is needed for this observation.
+- Add standard Python lint tests supported by the ROS environment.
 
 ### Acceptance Criteria
 
-- The native Jazzy package installs and resolves on ARM64.
-- Foxglove Bridge starts without schema, DDS, or WebSocket initialization
-  errors.
-- A local client can connect to `127.0.0.1:8766`.
-- The bridge discovers `/robot_description`, `/tf`, `/odom`, `/joint_states`,
-  and `/lidar/points` while the simulation is running.
-- No Docker container, source build, account credential, or external network
-  change is required.
+- `colcon build --symlink-install --packages-select aircraft_navigation`
+  passes.
+- The installed package is discoverable with `ros2 pkg prefix`.
+- A bounded manual or automated check proves X/Y/yaw changes consistently in
+  `/odom` and TF.
+- The package contains no publisher for `/cmd_vel` yet.
+- No ground-truth dependency is declared or consumed.
+
+### Validation
+
+```bash
+colcon build --symlink-install --packages-select aircraft_navigation
+source install/setup.bash
+ros2 pkg prefix aircraft_navigation
+ros2 launch burke_gazebo base_sim.launch.py gui:=false foxglove:=false
+ros2 topic echo --once /odom
+ros2 run tf2_ros tf2_echo odom base_footprint
+```
 
 ### Handoff
 
-- [x] Complete (2026-08-15)
-- Installed `ros-jazzy-foxglove-bridge` version
-  `3.4.1-1noble.20260612.130454` from the configured official ROS 2 apt
-  repository; the installed architecture is `arm64`.
-- `ros2 pkg prefix foxglove_bridge` resolves to `/opt/ros/jazzy` and the
-  installed launch resource is
-  `/opt/ros/jazzy/share/foxglove_bridge/launch/foxglove_bridge_launch.xml`.
-- Independent bridge command:
+Record the observed odometry frame IDs, TF relationship, update behavior, and
+proof that no ground-truth topic was consumed.
 
-  ```bash
-  ros2 launch foxglove_bridge foxglove_bridge_launch.xml \
-    address:=127.0.0.1 port:=8766
-  ```
+## Task 2 — Define the Aircraft Frame and Nose-Start Spawn Contract
 
-- Integrated headless validation used the existing
-  `ros2 launch burke_gazebo base_sim.launch.py gui:=false` command and the
-  bridge command above. The bridge reported `Server listening on port 8766`;
-  a local TCP client connected successfully.
-- While the simulation was running, the required topics were present:
-  `/robot_description`, `/tf`, `/odom`, `/joint_states`, and `/lidar/points`.
-  `/clock` and `/tf_static` were also present.
-- Temporary logs are stored at `/tmp/burke-task1-bridge.log`,
-  `/tmp/burke-task1-bridge-sim.log`, `/tmp/burke-task1-sim.log`, and under
-  `/tmp/burke-task1-ros-log*`.
-- The bridge shut down cleanly and port `8766` was successfully rebound after
-  cleanup. Gazebo emitted a shutdown-time segmentation-fault message under
-  the managed VM execution path; this is an existing simulation lifecycle
-  observation and did not leave the bridge or test port running.
-- No Docker container, source build, credential, or external network change
-  was used. Foxglove GUI validation was not performed; the headless TCP smoke
-  test is the applicable local proof for this task.
-
-## Task 2 — Add the Opt-In Foxglove Launch and Configuration
-
-- [x] Complete
+- [ ] Complete
 
 ### Prerequisite
 
@@ -324,107 +357,58 @@ Task 1.
 
 ### Goal
 
-Provide one supported launch command that starts the complete Burk-e simulation
-and a least-privilege Foxglove WebSocket server.
+Publish the manually configured aircraft frame and define a navigation-only
+spawn pose beside the future nose waypoint.
 
 ### Allowed Scope
 
-- New `burke_gazebo/launch/foxglove_sim.launch.py`
-- New `burke_gazebo/config/foxglove_bridge.yaml`
-- `burke_gazebo/package.xml`
-- Minimal launch/config installation corrections in `burke_gazebo/CMakeLists.txt`
-- No robot description, Gazebo world, ROS-Gazebo topic mapping, controller, or
-  sensor changes
+- `aircraft_navigation/config/aircraft_pose.yaml`
+- `aircraft_frame_publisher.py`
+- Focused frame tests.
+- Launch arguments or a narrow reusable spawn-pose interface in
+  `burke_gazebo/launch/base_sim.launch.py`.
+- Normal base-simulation defaults must remain unchanged.
+- No path or controller.
 
 ### Work
 
-1. Add `foxglove_bridge` as an execution dependency.
-2. Create a dedicated launch file that includes `base_sim.launch.py` and starts
-   Foxglove Bridge only from this opt-in entry point.
-3. Declare launch arguments:
-   - `gui`, forwarded to the base simulation;
-   - `foxglove_address`, default `0.0.0.0`;
-   - `foxglove_port`, default `8765`; and
-   - an optional `foxglove_config` path for test overrides.
-4. Load `config/foxglove_bridge.yaml` with `use_sim_time: true`.
-5. Configure the exact topic allowlist from this plan.
-6. Disable client publishing, services, and parameter access with allowlists
-   that match nothing and remove the corresponding capabilities.
-7. Retain connection-graph and asset access only as required by Foxglove's 3D
-   panel.
-8. Restrict assets to `package://burke_description/...` resources and supported
-   robot visual file extensions.
-9. Enable `/foxglove_bridge/client_count` for diagnosis.
-10. Ensure the lidar's best-effort QoS is handled correctly and measure whether
-    default send-buffer and compression settings are sufficient before tuning.
-11. Keep the simulation interfaces unchanged when launched directly; the
-    Foxglove bridge is enabled by default now that the operator has requested
-    default exposure, with `foxglove:=false` available for local opt-out.
-
-### Operator Command
-
-```bash
-source /opt/ros/jazzy/setup.bash
-source /home/parallels/ros_ws/install/setup.bash
-ros2 launch burke_gazebo foxglove_sim.launch.py \
-  gui:=false foxglove_address:=0.0.0.0 foxglove_port:=8765
-```
+- Verify the aircraft projected centre and nose direction from the current
+  world configuration and imported collision mesh.
+- Define `aircraft` at the projected aircraft centre with `+X` toward the nose.
+- Publish `odom -> aircraft` with a `StaticTransformBroadcaster` from validated
+  YAML configuration.
+- Freeze the exact provisional translation/yaw after verifying how wheel
+  odometry initializes when the base is spawned away from the world origin.
+- Add optional spawn arguments to the existing base launch only if needed;
+  preserve `(0,0,0)` as its default.
+- Define a navigation spawn contract that will place `base_footprint` beside P0
+  and align the MiR with the clockwise tangent once P0 exists in Task 3.
+- Do not read the Gazebo aircraft entity pose at runtime.
 
 ### Acceptance Criteria
 
-- The dedicated launch starts Gazebo, the robot, `ros_gz_bridge`, and
-  `foxglove_bridge` together.
-- The server binds the requested address and port.
-- Launching `base_sim.launch.py` directly starts Foxglove Bridge by default;
-  `foxglove:=false` disables it explicitly.
-- The UI can read only the allowlisted topics and required robot assets.
-- A client cannot advertise command topics, invoke services, or modify
-  parameters under the default configuration.
-- No host-specific IP, credential, or secret is checked into the repository.
-- Existing simulation launch and topic behavior remain unchanged.
+- `odom -> aircraft` is available from configuration with simulation time.
+- The aircraft frame origin and axes match the confirmed centre/nose contract.
+- Changing YAML aircraft pose moves the TF without changing publisher code.
+- The normal base launch still spawns at its original default pose.
+- The navigation spawn can be configured without editing the world SDF.
+- No path or follower depends on how the aircraft transform is produced.
+
+### Validation
+
+```bash
+ros2 run tf2_ros tf2_echo odom aircraft
+ros2 run tf2_ros tf2_echo aircraft base_footprint
+```
 
 ### Handoff
 
-- [x] Complete (2026-08-15)
-- Changed files:
-  `burke_gazebo/launch/foxglove_sim.launch.py`,
-  `burke_gazebo/config/foxglove_bridge.yaml`, and
-  `burke_gazebo/package.xml`. The existing CMake install rule already installs
-  both `launch` and `config` directories, so no CMake change was required.
-- Launch arguments are `gui` (default `true`), `foxglove_address` (default
-  `0.0.0.0`), `foxglove_port` (default `8765`), and `foxglove_config` (the
-  installed project YAML by default). The launch includes `base_sim.launch.py`
-  and starts Foxglove Bridge only from this dedicated entry point.
-- The default topic regex is
-  `^/(?:clock|tf|tf_static|robot_description|odom|joint_states|lidar/points|foxglove_bridge/client_count)$`.
-  `client_topic_whitelist`, `service_whitelist`, and `param_whitelist` are
-  each `^$`, which matches no usable name. Capabilities are limited to
-  `connectionGraph` and `assets`; hidden topics and sysinfo are disabled.
-- Asset retrieval is limited to
-  `^package://burke_description/cad/stl/[A-Za-z0-9_.%-]+[.]stl$`.
-  Lidar best-effort QoS is explicitly allowed with
-  `^/lidar/points$`; send-buffer and compression defaults were not tuned.
-- Validation command:
+Record the exact transform, axis convention, spawn interface, odometry-origin
+behavior, and any remaining simulation assumptions.
 
-  ```bash
-  colcon build --symlink-install --packages-select burke_gazebo
-  ros2 launch burke_gazebo foxglove_sim.launch.py \
-    gui:=false foxglove_address:=127.0.0.1 foxglove_port:=8766
-  ```
+## Task 3 — Define and Publish the Clockwise 1 m Perimeter Path
 
-- The installed launch started Gazebo, `ros_gz_bridge`, and Foxglove Bridge;
-  `/foxglove_bridge/client_count` plus all required visualization topics were
-  advertised, and a TCP client connected to the `ws://127.0.0.1:8766` listener.
-  The default `base_sim.launch.py gui:=false` behavior was separately checked
-  on a test port and opened the Foxglove listener.
-- This validates the VM-local listener and policy only. No Parallels, firewall,
-  router, VPN, host-network, credential, or external reachability changes were
-  made. Runtime logs are under `/tmp/burke-task2-foxglove.log` and
-  `/tmp/burke-task2-base.log`.
-
-## Task 3 — Add Local Tests and Lifecycle Handling
-
-- [x] Complete
+- [ ] Complete
 
 ### Prerequisite
 
@@ -432,86 +416,57 @@ Task 2.
 
 ### Goal
 
-Make the Foxglove launch, listener, topic policy, and cleanup behavior
-repeatably verifiable from inside the VM.
+Create a validated closed path in `aircraft` that starts at the nose and stays
+1 m outside the projected aircraft collision geometry.
 
 ### Allowed Scope
 
-- New `burke_gazebo/test/test_foxglove_bridge.py`
-- Test registration and test-only dependencies
-- `scripts/stop_burke_sim.bash`
-- `scripts/burke_sim_aliases.bash` only if a Foxglove-specific helper is useful
-- Minimal Task 2 corrections when tests prove a defect
-- No external network or firewall changes
+- `perimeter_path.yaml`
+- `path_geometry.py`
+- `perimeter_path_publisher.py`
+- Pure path/configuration tests.
+- No controller or `/cmd_vel` publication.
 
-### Test Requirements
+### Work
 
-Add bounded tests that:
-
-1. verify `foxglove_bridge` resolves from the installed environment;
-2. parse the installed configuration and assert the expected address, test
-   port override, topic allowlist, disabled write paths, and asset restriction;
-3. launch `foxglove_sim.launch.py` headlessly on `127.0.0.1:8766`;
-4. wait for the Foxglove node and required ROS topics with explicit timeouts;
-5. establish a local TCP connection to `127.0.0.1:8766`;
-6. perform a Foxglove WebSocket handshake if it can be done with a stable,
-   packaged dependency; otherwise leave protocol/UI validation to Task 5;
-7. verify `/foxglove_bridge/client_count` changes when a compatible client is
-   connected, when protocol validation is available;
-8. prove that the ordinary `base_sim.launch.py` creates a listener by default
-   and that `foxglove:=false` disables it;
-9. terminate all launched processes and prove the test port can be rebound;
-10. retain all existing arm, lift, base, lidar, and ROS-Gazebo tests; and
-11. use actionable failure messages that distinguish bridge failure from
-    external network reachability.
-
-Update `scripts/stop_burke_sim.bash` so a Foxglove-enabled simulation shutdown
-also terminates the bridge. Keep its scope narrow enough that it does not kill
-unrelated WebSocket applications.
+- Derive a documented 2D planform boundary from the current aircraft collision
+  mesh/configuration for offline validation only.
+- Author approximately 10–30 ordered waypoints in the `aircraft` frame.
+- Place P0 at the nose, 1 m outward from the aircraft boundary.
+- Order points clockwise when viewed from `+Z`.
+- Close the loop explicitly without creating a zero-length final segment.
+- Avoid extremely sharp corners; add intermediate points around nose, wingtip,
+  and tail transitions as needed.
+- Validate finite values, unique consecutive points, non-zero segments,
+  clockwise signed area, closure, and at least 1 m centreline clearance.
+- Calculate and store the P0 tangent used by the navigation spawn.
+- Publish a transient-local `nav_msgs/msg/Path` on `/aircraft_path` with every
+  pose in `aircraft` and planar unit orientation.
 
 ### Acceptance Criteria
 
-- A clean build and all registered tests pass.
-- Tests use loopback and a non-production port and require no LAN access.
-- A stale bridge cannot make the test pass.
-- Cleanup releases the port and leaves no Foxglove process from the test.
-- Existing tests are not skipped, weakened, or reordered to hide regressions.
-- Test output clearly says that local success does not prove remote reachability.
+- The path contains 10–30 non-degenerate ordered points.
+- P0 is the nose waypoint.
+- Signed geometry verifies clockwise order.
+- Every segment maintains at least 1.0 m clearance from the projected aircraft
+  collision boundary within an explicitly documented numerical tolerance.
+- The path is closed and has a stable total arc length.
+- `/aircraft_path` has `header.frame_id=aircraft` and transient-local QoS.
+- Path publication requires no Gazebo pose topic or Nav2 dependency.
 
 ### Validation
 
 ```bash
-colcon build --symlink-install --packages-select burke_description burke_gazebo
-source install/setup.bash
-colcon test --packages-select burke_description burke_gazebo --event-handlers console_direct+
-colcon test-result --verbose
+ros2 topic info --verbose /aircraft_path
+ros2 topic echo --once /aircraft_path
 ```
 
 ### Handoff
 
-- [x] Complete (2026-08-15)
-- Added `burke_gazebo/test/test_foxglove_bridge.py` and registered it in
-  `burke_gazebo/CMakeLists.txt`; added `python3-yaml` as a test dependency.
-- Tests use loopback port `8766` with a 30-second readiness timeout and
-  bounded process cleanup. They parse the installed YAML, verify the package
-  resolves, check the default base launch listener, verify all visualization
-  topics, establish a local TCP connection, and rebind the port after cleanup.
-  A WebSocket protocol handshake was not added because no stable packaged
-  client dependency is required for this local milestone.
-- Existing arm and lidar tests were retained and explicitly opt out with
-  `foxglove:=false` so they do not contend for the production listener while
-  testing unrelated simulation interfaces.
-- `scripts/stop_burke_sim.bash` now stops the specific native
-  `/foxglove_bridge/foxglove_bridge` executable in addition to the existing
-  Gazebo process patterns; it does not target generic WebSocket processes.
-- Validation passed:
-  `colcon build --symlink-install --packages-select burke_gazebo`, complete
-  `colcon test --packages-select burke_gazebo`, and
-  `colcon test-result --verbose` reported `11 tests, 0 errors, 0 failures,
-  0 skipped`. Local success does not prove Parallels, firewall, LAN, or
-  remote Foxglove reachability; those remain deferred to Tasks 4–5.
+Record waypoint count, total length, minimum verified clearance, signed area,
+P0 coordinates, P0 tangent yaw, and the planform-validation method.
 
-## Task 4 — Document and Hand Off External Reachability
+## Task 4 — Add RViz Geometry and TF Validation
 
 - [ ] Complete
 
@@ -521,154 +476,398 @@ Task 3.
 
 ### Goal
 
-Give the user exact, non-destructive steps to make the VM's Foxglove listener
-reachable without changing Parallels or firewall settings automatically.
+Make frame and path errors visible before autonomous motion is possible.
 
 ### Allowed Scope
 
-- `README.md`
-- Optional read-only diagnostic script that prints commands and results without
-  changing networking
-- No firewall rule, Parallels preference, router, VPN, or remote-machine change
-
-### Documentation Requirements
-
-Document:
-
-1. installation of `ros-jazzy-foxglove-bridge`;
-2. the opt-in launch command and every launch argument;
-3. local connection testing with `ws://127.0.0.1:8765`;
-4. how the user can obtain the guest IP with `ip -brief address` and inspect the
-   route with `ip route` outside the managed sandbox;
-5. the bridged, shared/NAT, and host-only Parallels cases from this plan;
-6. how to configure a host-to-guest TCP `8765` port forward in the appropriate
-   Parallels version when shared networking is used;
-7. a narrowly scoped Ubuntu firewall example, such as allowing TCP `8765` only
-   from the intended client IP, while requiring the user to review and run it;
-8. the need to check the host firewall and Wi-Fi/VPN client isolation;
-9. how to test from the remote machine with `nc -vz <address> 8765` or an
-   equivalent TCP client;
-10. the Foxglove connection URL for direct guest and host-forwarded cases;
-11. the difference between local listener success and end-to-end reachability;
-12. the direct-connection account/seat requirement;
-13. the security implications of unencrypted `ws://` and why it is limited to
-    a trusted LAN; and
-14. troubleshooting by failure layer: bridge process, VM listener, Ubuntu
-    firewall, Parallels route/forward, host firewall, LAN, and Foxglove client.
-
-Do not put a discovered private address into committed examples. Use
-`<VM_LAN_IP>`, `<HOST_LAN_IP>`, and `<CLIENT_IP>` placeholders.
-
-### Acceptance Criteria
-
-- A user can identify which Parallels networking case applies.
-- Every network-changing command is clearly labeled as an operator action.
-- The documentation never claims that repository code opened the external
-  path.
-- Troubleshooting identifies the exact boundary at which traffic fails.
-- No broad `0.0.0.0/0` firewall example, credential, or public exposure is
-  recommended.
-
-### Handoff
-
-Report documentation changes, the detected limitation of the managed
-environment, local diagnostic results, and the exact external steps left for
-the user.
-
-## Task 5 — Validate Foxglove from Another Machine
-
-- [ ] Complete
-
-### Prerequisites
-
-Tasks 1–4 and user-completed network configuration.
-
-### Goal
-
-Prove the final experience from the actual Foxglove UI machine without
-expanding the bridge's read-only permissions.
-
-### User-Provided Inputs
-
-- Confirmation that the client has Foxglove Desktop or Chrome access
-- A Foxglove account/seat that supports the chosen connection type
-- The reachable VM or host address
-- Confirmation that Parallels and firewall configuration is complete
+- `rviz/perimeter_debug.rviz`
+- Debug-only launch composition.
+- Read-only visualization/debug topics.
+- No follower and no `/cmd_vel` publisher.
 
 ### Work
 
-1. Start the opt-in Foxglove simulation in the VM.
-2. From the UI machine, verify TCP reachability to the chosen address and port.
-3. In Foxglove, select **Foxglove WebSocket** and connect to:
-
-   ```text
-   ws://<reachable-vm-or-host-address>:8765
-   ```
-
-4. Confirm the Topics panel contains only the intended visualization topics.
-5. Configure a 3D panel with `odom` as the initial display frame.
-6. Display the URDF robot model, TF frames, and `/lidar/points`.
-7. Add plots or raw-message panels for `/odom` and `/joint_states`.
-8. Drive the MiR and command the arm/lift locally in the VM; confirm the remote
-   UI updates while remote command publication remains unavailable.
-9. Observe latency, dropped updates, bridge send-buffer warnings, VM CPU/GPU
-   load, and point-cloud responsiveness.
-10. If lidar traffic is excessive, tune bridge compression/buffering or the
-    simulated lidar rate only after recording the bottleneck and preserving the
-    required visualization fidelity.
-11. Disconnect the UI, stop the simulation with the repository cleanup helper,
-    and confirm the connection closes and port is released.
+- Configure RViz with fixed frame `odom`.
+- Display TF, robot model, `/aircraft_path`, and the robot pose.
+- Display the aircraft frame prominently.
+- Add placeholder displays for lookahead and closest-point topics that Task 6
+  will activate.
+- If the aircraft mesh cannot be displayed directly in RViz without adding a
+  misleading duplicate transform, use a clearly labelled 2D footprint marker
+  derived from the same offline path-validation geometry.
+- Document the manual geometry review checklist.
 
 ### Acceptance Criteria
 
-- The remote machine connects without installing ROS 2 or Gazebo.
-- Robot model, TF, odometry, joint states, and 3D lidar data render correctly.
-- Simulation-time updates remain coherent across panels.
-- Remote clients cannot publish motion commands, call services, or modify
-  parameters with the default profile.
-- The UI remains responsive at the documented lidar rate on the intended LAN.
-- Shutdown removes the Foxglove listener and all simulation-owned processes.
-- Any Parallels, firewall, LAN, account, or client restriction is reported as
-  an external blocker rather than hidden by repository changes.
+- RViz shows connected `odom`, `base_footprint`, and `aircraft` frames.
+- The path visually surrounds the aircraft at the requested clearance.
+- P0 is visibly at the nose.
+- Waypoint order is clockwise.
+- The navigation spawn is beside P0 and aligned with its tangent.
+- No autonomous command publisher exists yet.
+
+### Validation
+
+```bash
+rviz2 -d $(ros2 pkg prefix aircraft_navigation)/share/aircraft_navigation/rviz/perimeter_debug.rviz
+```
 
 ### Handoff
 
-Report the connection path used, address category without committing the
-private address, client type, panels tested, observed latency and resource use,
-read-only policy verification, shutdown result, external settings changed by
-the user, and any remaining blocker.
+Record the visual review result and attach a screenshot or describe any geometry
+that remains difficult to verify.
 
-## Final Validation Commands
+## Task 5 — Implement Pure Pursuit as Tested Pure Python Logic
 
-Inside the Ubuntu VM:
+- [ ] Complete
+
+### Prerequisite
+
+Task 4.
+
+### Goal
+
+Implement path projection, progress, lookahead selection, curvature, speed
+selection, and rate limiting without ROS side effects.
+
+### Allowed Scope
+
+- `path_geometry.py`
+- `pure_pursuit.py`
+- Unit tests and fixtures.
+- No ROS node, TF listener, launch changes, or `/cmd_vel` publisher.
+
+### Work
+
+- Represent the closed path by segments and cumulative arc length.
+- Project a robot point onto candidate segments.
+- Track continuous progress modulo total loop length.
+- Search for the closest point only in a bounded forward window around retained
+  progress; never globally jump backward near adjacent sections.
+- Select a lookahead point by advancing configured arc length with wraparound.
+- Transform target coordinates into the robot frame through pure 2D math used
+  by unit tests.
+- Implement curvature `2*y/L²` with protection for near-zero lookahead distance.
+- Reduce linear speed as curvature grows, then clamp to configured min/max.
+- Clamp angular speed and linear/angular acceleration per control step.
+- Return an explicit zero command for invalid, non-finite, or degenerate input.
+
+### Required Unit Cases
+
+- Straight path and centred robot.
+- Left and right curves with correct angular sign.
+- Near-zero lookahead distance.
+- Closed-loop wraparound at P0.
+- Robot near two spatially close but distant-in-progress segments.
+- Forward-window tracking without backward jumps.
+- Curvature-based speed reduction.
+- Linear and angular acceleration limiting.
+- Non-finite input rejection.
+- One-loop progress and completion threshold logic.
+
+### Acceptance Criteria
+
+- Pure unit tests require no ROS graph, Gazebo, or display.
+- Identical inputs produce identical outputs.
+- Only forward linear velocity and yaw rate are produced.
+- Progress does not jump backward or skip across nearby path sections.
+- Every configured bound and invalid-input branch is covered.
+
+### Validation
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-cd /home/parallels/ros_ws
-colcon build --symlink-install --packages-select burke_description burke_gazebo
+colcon test --packages-select aircraft_navigation --event-handlers console_direct+
+colcon test-result --verbose
+```
+
+### Handoff
+
+Record the math API, progress representation, wraparound rules, test cases, and
+coverage of all safety bounds.
+
+## Task 6 — Implement the Pure Pursuit Follower Node
+
+- [ ] Complete
+
+### Prerequisite
+
+Task 5.
+
+### Goal
+
+Connect the tested controller logic to ROS topics and TF while remaining
+fail-closed.
+
+### Allowed Scope
+
+- `pure_pursuit_follower.py`
+- `controller.yaml`
+- Node-level tests and debug topics.
+- No integrated autonomous launch yet.
+
+### Work
+
+- Load and validate every controller parameter at node construction.
+- Subscribe to `/odom` and transient-local `/aircraft_path`.
+- Use `tf2_ros.Buffer` and `TransformListener` for `odom`, `aircraft`, and
+  `base_footprint` transforms.
+- Run at the configured 20 Hz simulation-time rate.
+- Preserve progress across path updates only when path identity/geometry is
+  unchanged; otherwise stop and reset deterministically.
+- Publish `/cmd_vel`, lookahead, closest point, progress, and cross-track error.
+- Populate only `linear.x` and `angular.z`; all other Twist fields remain zero.
+- Publish zero on stale odometry, missing/stale TF, invalid path, completion,
+  shutdown, and controller exceptions.
+- Detect exactly one completed loop using retained continuous progress, not
+  nearest-point coincidence at P0.
+- Record maximum and RMS cross-track error, maximum heading error, progress
+  regressions, command bounds, acceleration bounds, execution time, and final
+  completion state in a final structured log summary.
+- Refuse to command while another unexpected `/cmd_vel` publisher is active if
+  reliable publisher discovery can enforce this without race-prone behavior;
+  otherwise document the exclusive-publisher operational requirement and test
+  it in Task 8.
+
+### Acceptance Criteria
+
+- The node publishes no non-zero command before odometry, path, and TF are
+  ready.
+- Normal output never exceeds configured velocity or acceleration bounds.
+- Loss of any required input produces zero within a bounded interval.
+- One-loop completion produces zero and cannot restart without relaunch/reset.
+- Debug topics match the controller's internal active targets and errors.
+- Node tests use synthetic messages/TF and require no Gazebo ground truth.
+
+### Validation
+
+```bash
+ros2 run aircraft_navigation pure_pursuit_follower --ros-args \
+  --params-file $(ros2 pkg prefix aircraft_navigation)/share/aircraft_navigation/config/controller.yaml
+```
+
+### Handoff
+
+Record parameter validation, freshness rules, stop behavior, completion state
+machine, debug topics, metrics, and node-test results.
+
+## Task 7 — Add the Opt-In Fixed-Perimeter Launch
+
+- [ ] Complete
+
+### Prerequisite
+
+Task 6.
+
+### Goal
+
+Provide a separate launch that starts the existing simulation at the nose and
+runs the manual aircraft frame, path publisher, RViz option, and follower.
+
+### Allowed Scope
+
+- `fixed_perimeter_follow.launch.py`
+- Narrow reusable launch arguments in `base_sim.launch.py`.
+- Package installation metadata.
+- No changes to the normal base-simulation defaults.
+
+### Work
+
+- Include `burke_gazebo/base_sim.launch.py` with Foxglove optional and with the
+  navigation-specific spawn pose beside P0.
+- Start the aircraft-frame publisher and perimeter-path publisher.
+- Start RViz only behind a launch argument.
+- Keep the follower opt-in within this separate launch; normal base simulation
+  remains manually controlled.
+- Ensure LiftKit remains collapsed and place the UR arm in its documented stow
+  pose before allowing non-zero base motion. Use existing command interfaces;
+  do not add arm/lift orchestration architecture in this milestone.
+- Confirm no keyboard teleoperation or other `/cmd_vel` publisher is running.
+- Sequence startup with readiness checks or a small dedicated gate rather than
+  an unexplained sleep.
+- On shutdown, publish zero `/cmd_vel` and leave lift/arm in their safe state.
+
+### Operator Command
+
+```bash
+ros2 launch aircraft_navigation fixed_perimeter_follow.launch.py
+```
+
+Required launch arguments:
+
+- `gui` default `true`;
+- `rviz` default `true`;
+- `foxglove` default `false`;
+- `autostart` default `true` for this dedicated launch;
+- aircraft pose/config paths;
+- path/controller config paths; and
+- spawn pose derived from P0 and its clockwise tangent.
+
+### Acceptance Criteria
+
+- The dedicated launch starts one simulation, one robot, one aircraft-frame
+  publisher, one path publisher, and one follower.
+- The MiR appears beside the nose P0 with the expected orientation.
+- `base_sim.launch.py` alone still uses its original pose and starts no
+  navigation nodes.
+- Launch startup has no fixed timing race.
+- Shutdown sends zero and terminates all owned processes.
+- Existing arm, lift, lidar, bridge, and optional Foxglove interfaces remain
+  available.
+
+### Handoff
+
+Record the complete launch graph, resolved spawn pose, readiness sequence,
+arguments, and regression results for normal base simulation.
+
+## Task 8 — Validate One Full Clockwise Loop and Document Operation
+
+- [ ] Complete
+
+### Prerequisite
+
+Task 7.
+
+### Goal
+
+Prove the requested behavior end to end using only wheel odometry for robot
+state.
+
+### Allowed Scope
+
+- `test_navigation_interfaces.py`
+- `test_perimeter_loop.py`
+- Test registration/dependencies.
+- `README.md` navigation usage and troubleshooting.
+- Minimal fixes to Tasks 2–7 only when a test proves a defect.
+
+### Interface Test Requirements
+
+Verify with bounded waits:
+
+1. `/odom` and `odom -> base_footprint` agree on robot motion.
+2. `odom -> aircraft` matches configuration.
+3. `/aircraft_path` is closed, clockwise, transient-local, and expressed in
+   `aircraft`.
+4. P0 and spawn pose are at the nose with the expected tangent alignment.
+5. Exactly one intended autonomous `/cmd_vel` publisher is active.
+6. Debug topics use the documented types and frames.
+7. No node in `aircraft_navigation` subscribes to a Gazebo ground-truth topic.
+
+### Full-Loop Test Requirements
+
+Run headlessly and:
+
+1. Start the dedicated launch with RViz and Foxglove disabled.
+2. Wait for all required topics and TF with explicit timeouts.
+3. Confirm lift collapsed and arm stowed before first non-zero base command.
+4. Observe progress monotonically from near zero to one full loop.
+5. Record cross-track error, heading error, commands, acceleration, execution
+   time, and progress regressions.
+6. Confirm every command stays within the active profile.
+7. Confirm the robot completes the loop clockwise without collision or
+   oscillatory reversal.
+8. Confirm completion publishes zero and the base remains stopped for a
+   bounded observation period.
+9. Confirm the controller does not begin a second loop.
+10. Shut down cleanly and retain actionable logs on failure.
+
+The test may use `/odom`, TF, commands, progress, and debug topics. It must not
+use Gazebo world/model pose to score tracking or completion.
+
+### Tuning and Metric Acceptance
+
+- Start with the controller profile in this plan.
+- Tune only configuration values, not hidden literals.
+- Record before/after metrics for every tuning change.
+- Freeze final maximum/RMS cross-track and heading-error acceptance thresholds
+  from the first stable baseline, with explicit rationale in the test and
+  README.
+- If a stable loop requires changing the requested 1 m aircraft clearance,
+  stop and ask rather than changing the path silently.
+
+### Acceptance Criteria
+
+- One full clockwise loop completes from the nose start.
+- The path centreline remains the validated 1 m from aircraft geometry.
+- Robot state comes only from wheel odometry and TF.
+- The controller stops after one loop and stays stopped.
+- Nav2, SLAM, maps, lidar localization, and Gazebo ground truth are absent.
+- Repeated headless runs pass with the frozen metric thresholds.
+- Manual GUI/RViz validation shows the path and lookahead geometry correctly.
+- Existing base, lift, arm, lidar, and Foxglove tests still pass.
+- README documents build, launch, configuration, path editing, metrics,
+  shutdown, and troubleshooting.
+
+### Validation
+
+Run from the outer ROS workspace root:
+
+```bash
+colcon build --symlink-install --packages-select \
+  burke_description burke_gazebo aircraft_navigation
 source install/setup.bash
-ros2 launch burke_gazebo foxglove_sim.launch.py \
-  gui:=false foxglove_address:=0.0.0.0 foxglove_port:=8765
+colcon test --packages-select \
+  burke_description burke_gazebo aircraft_navigation \
+  --event-handlers console_direct+
+colcon test-result --verbose
+ros2 launch aircraft_navigation fixed_perimeter_follow.launch.py
 ```
 
-From the remote UI machine, after the user configures routing and firewalls:
+### Handoff
 
-```bash
-nc -vz <reachable-vm-or-host-address> 8765
-```
+Record repeated-run count, final parameters, metric thresholds/results,
+completion time, stop observation, absence of ground-truth subscriptions,
+manual RViz result, and all regression results.
 
-Then connect Foxglove to:
+## Milestone Definition of Done
 
-```text
-ws://<reachable-vm-or-host-address>:8765
-```
+- [ ] `odom -> base_footprint` is the only robot-pose source used by the
+      follower.
+- [ ] A configurable manual `odom -> aircraft` transform is published.
+- [ ] The aircraft frame is centred with `+X` toward the nose.
+- [ ] A 10–30 point clockwise closed path starts at the nose and maintains a
+      validated 1 m centreline clearance.
+- [ ] The path is published as transient-local `nav_msgs/msg/Path` in
+      `aircraft`.
+- [ ] The MiR spawns beside P0 aligned with the clockwise tangent only in the
+      dedicated navigation launch.
+- [ ] RViz shows frames, robot, path, closest point, and lookahead.
+- [ ] The Python Pure Pursuit follower commands only `linear.x` and
+      `angular.z`.
+- [ ] Progress cannot jump backward across nearby path sections.
+- [ ] Curvature-based speed reduction and configured rate limits are active.
+- [ ] Missing/stale inputs, exceptions, shutdown, and completion produce an
+      explicit zero command.
+- [ ] The MiR completes exactly one clockwise loop and remains stopped.
+- [ ] Tracking and motion metrics are recorded with frozen acceptance
+      thresholds.
+- [ ] Nav2, SLAM, occupancy maps, obstacle replanning, lidar localization, and
+      Gazebo ground truth are not used.
+- [ ] Replacing the manual aircraft-frame publisher later will not require
+      changes to the path publisher or follower.
+- [ ] Normal `base_sim.launch.py` remains manually controlled and retains its
+      original defaults.
+
+## Deferred Follow-Up
+
+After this milestone, plan separately:
+
+1. Use the front-deck 3D lidar and/or depth cameras to estimate aircraft pose.
+2. Replace the manual `odom -> aircraft` publisher with localization output.
+3. Recenter the existing aircraft-relative path as localization updates.
+4. Add obstacle observation and bounded path replanning.
+5. Convert selected path locations into inspection stations.
+6. Coordinate base motion with LiftKit, UR8L, and payload inspection behavior.
 
 ## Reference Sources
 
-- Foxglove ROS 2 setup and direct connection instructions:
-  <https://docs.foxglove.dev/docs/getting-started/frameworks/ros2>
-- Foxglove Bridge installation, launch, address, port, allowlist, capability,
-  and asset configuration:
-  <https://github.com/foxglove/foxglove-sdk/blob/main/ros/src/foxglove_bridge/README.md>
-- Foxglove direct WebSocket versus managed remote-access behavior:
-  <https://docs.foxglove.dev/docs/visualization/connecting/live>
+- ROS 2 Jazzy Python package and launch conventions:
+  <https://docs.ros.org/en/jazzy/Tutorials/Intermediate/Launch/Launch-system.html>
+- ROS 2 Jazzy Python package development:
+  <https://docs.ros.org/en/jazzy/How-To-Guides/Developing-a-ROS-2-Package.html>
+- ROS 2 Jazzy Python environment guidance:
+  <https://docs.ros.org/en/jazzy/How-To-Guides/Using-Python-Packages.html>
+- ROS 2 Jazzy `nav_msgs`, including `Path` and `Odometry`:
+  <https://docs.ros.org/en/jazzy/p/nav_msgs/README.html>
+- ROS 2 Jazzy Python TF listener implementation:
+  <https://docs.ros.org/en/jazzy/p/tf2_ros_py/_modules/tf2_ros/transform_listener.html>
