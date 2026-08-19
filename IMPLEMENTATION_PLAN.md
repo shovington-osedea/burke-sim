@@ -1,841 +1,1041 @@
-# Aircraft-Relative MiR Path Following Implementation Plan
+# Gazebo Integration Plan for `bombardier_burk-e_monorepo`
 
 ## Objective
 
-Build the first autonomous-motion behavior for the Burk-e simulation:
+Integrate the current Burk-e Gazebo simulation into
+`Osedea/bombardier_burk-e_monorepo` while keeping Gazebo isolated and optional.
 
-> Make the differential-drive MiR complete one clockwise, closed 2D loop whose
-> centreline remains 1 m outside the aircraft geometry, using wheel odometry
-> only and a fixed path expressed in an aircraft-relative frame.
+The monorepo must retain two explicit development paths:
 
-The behavior must not use Gazebo model pose, world pose, Nav2, SLAM, an
-occupancy map, or obstacle-aware replanning. The design must allow a future
-aircraft-localization node to replace the manual aircraft transform without
-changing the path publisher or follower.
+1. **Deterministic simulation (default)** — the existing in-memory service
+   adapters remain the default. ROS and Gazebo are not installed, started, or
+   contacted.
+2. **Gazebo-backed simulation (opt-in)** — MiR1350, UR8L, and LiftKit commands
+   and observations are backed by native ROS 2 Jazzy/Gazebo Harmonic. Services
+   without a Gazebo implementation remain on their deterministic adapters.
+
+This plan was reevaluated on **2026-08-19** against monorepo `main` commit
+`58caed59e7bfc92dbe0914b5f1f94c1b2db7eecc`. The previous plan was based on
+`908e7bc`; implementation must not use that older tree as its baseline.
 
 ## Confirmed Decisions
 
-- Implementation language: Python.
-- New ROS package: `aircraft_navigation`, using `ament_python`.
-- Robot pose frame: existing `odom -> base_footprint` wheel-odometry TF.
-- Aircraft frame origin: projected centre of the aircraft.
-- Aircraft frame orientation: `+X` points toward the aircraft nose, `+Y` points
-  to the aircraft's left, and `+Z` points up.
-- Current nominal aircraft pose: centred near `(0, 12)` in the existing world.
-  Because the current mesh nose points toward negative `odom` X, the provisional
-  manual transform is approximately `odom -> aircraft = (x=0, y=12, yaw=pi)`.
-  Task 2 must verify and freeze the exact value from configuration.
-- Path direction: clockwise when viewed from above.
-- Path clearance: path centreline must remain at least `1.0 m` outside the
-  aircraft collision geometry projected onto the ground plane.
-- First path point: at the aircraft nose.
-- Initial robot placement: beside the first nose waypoint and aligned with the
-  clockwise path tangent, so this milestone tests following rather than path
-  acquisition from the current world origin.
-- Runtime behavior: opt-in through a separate
-  `fixed_perimeter_follow.launch.py`; normal `base_sim.launch.py` must not start
-  autonomous motion.
-- First execution: complete exactly one loop, publish zero velocity, and stop.
+- Gazebo source belongs in the monorepo under `simulation/gazebo/`.
+- ROS 2 and Gazebo remain native on Ubuntu 24.04 for this milestone.
+- The application stack continues to run through Docker Compose.
+- Plain `docker compose up --build` keeps the deterministic backend and has no
+  ROS/Gazebo dependency.
+- A separate Compose override selects Gazebo explicitly.
+- MiR1350, UR8L, and LiftKit are the first Gazebo-backed devices.
+- Payload capture, surface waypoints, planning, defect detection, reporting,
+  and Safe PLC projection remain deterministic until separately implemented.
+- Both backends use `BURKE_HARDWARE_MODE=simulation`. Gazebo must never select
+  or imply hardware mode.
+- Existing Control API, Robot Orchestrator, device-service, Operational
+  Supervision, command, actor, idempotency, and persistence boundaries remain
+  authoritative.
+- No GitHub repository, branch, or standalone simulator repository is deleted,
+  archived, or rewritten as part of the import.
 
-All geometric values derived from the imported aircraft mesh remain simulation
-assumptions. Do not present them as surveyed aircraft dimensions.
+## Reevaluation Summary
 
-## Existing Baseline to Preserve
+The new `main` changes several assumptions from the prior plan.
 
-The repository already provides:
+| New `main` baseline | Effect on this integration plan |
+| --- | --- |
+| Raw MiR, LiftKit, UR8L, controller, and camera-module CAD now exists under root `assets/`. | Do not import duplicate raw CAD into `simulation/gazebo`. Use the monorepo assets as canonical source inputs and retain only simulator-derived meshes beside the ROS package. |
+| The new raw CAD files are byte-identical to the corresponding standalone simulator sources, despite naming differences. | Create a checked manifest mapping source filename, SHA-256, units, transform, and generated simulator asset. Fail generation when a source digest changes. |
+| V2 inspection hierarchy now models three stations and three elevation segments per station. | The Gazebo plan must validate against the existing V2 lifecycle rather than inventing a parallel demo workflow. |
+| MiR placement evidence now comes from real MiR service command/snapshot calls in `SimulationLifecycleDriver`. | A Gazebo MiR adapter can feed measured station placement through the existing path; no Orchestrator-specific Gazebo client should be added. |
+| Lift service now owns V2 `LiftPositionProfile` commands and measured completion evidence. | Gazebo Lift must implement both the legacy V1 seam and the V2 profile seam. The old plan's three hardcoded legacy preset mappings are insufficient. |
+| Approved V2 Lift targets are `880`, `1240`, and `1600 mm`, with a provisional `0–2000 mm` range. | The current Gazebo model exposes only `0–500 mm` total joint travel. This is a blocking coordinate/range mismatch and must not be scaled, clamped, or offset without an explicit profile decision. |
+| UR service now distinguishes wrist TCP, Inspection Payload TCP, and Gemini depth-camera transforms. | The Gazebo URDF/TF tree must use those distinct semantics. The Gemini offset is not the Inspection Payload TCP offset. |
+| UR service owns provisional transform profile `inspection-policy-v1-simulation-transform-v2`. | Gazebo must carry the same profile identity/revision through a generated simulator manifest and parity tests rather than creating an independent transform. |
+| Operational Supervision now has a deterministic Safe PLC status projection and a Lift decision seam. | Keep that projection deterministic in Gazebo mode. Gazebo collision/contact state is not PLC or permit evidence. |
+| The monorepo now includes `compose.hardware.yaml`. | `compose.gazebo.yaml` must be a separate, simulation-only overlay and must reject or document combined use with the hardware overlay. |
+| Robot Orchestrator now has a public simulation lifecycle and durable V2 report path. | End-to-end acceptance should use `/v1/simulations/inspection-lifecycles` and the V2 report, while accurately identifying any evidence still supplied by deterministic providers. |
 
-- ROS 2 Jazzy and Gazebo Harmonic integration;
-- the `burke_description` and `burke_gazebo` packages;
-- a differential-drive MiR base with `+X` forward, `+Y` left, and `+Z` up;
-- `/cmd_vel` as `geometry_msgs/msg/Twist`;
-- `/odom` as `nav_msgs/msg/Odometry`;
-- `/tf` containing `odom -> base_footprint`;
-- a static Challenger aircraft model in `burke_empty`;
-- independent LiftKit and UR8 Long controls;
-- a fixed front-deck 3D lidar; and
+## Terminology
+
+Use the monorepo glossary without redefining its workflow terms:
+
+- **Deterministic backend** — the existing network-free simulation adapters.
+- **Gazebo backend** — the optional adapters whose measured MiR, UR, and Lift
+  state comes from the native simulator.
+- **Gazebo gateway** — the private simulation transport between containerized
+  device services and native ROS. It is not a public device service.
+- **Inspection station** — all inspection work at one achieved MiR placement.
+- **Elevation segment** — inspection work at one commanded/measured Lift
+  elevation while MiR and Lift remain stationary.
+- **Safe PLC status projection** — the existing read-only, non-safety-rated
+  software projection. It remains independent of Gazebo.
+
+All Gazebo geometry, transforms, limits, and outcomes remain simulation
+evidence. They are not commissioned calibration, collision freedom,
+operational permission, or hardware validation.
+
+## Current Baselines
+
+### Standalone Gazebo repository
+
+The current simulator provides:
+
+- ROS 2 Jazzy and Gazebo Harmonic;
+- `burke_description`, `burke_gazebo`, and `aircraft_navigation` packages;
+- a differential-drive MiR base;
+- a three-stage LiftKit with two actuated prismatic joints;
+- a six-joint UR8 Long;
+- a Challenger aircraft;
+- odometry, TF, joint state, clock, and lidar outputs;
+- scalar arm and Lift position commands;
+- `/cmd_vel` mobile-base control;
+- an opt-in aircraft-relative perimeter follower; and
 - optional Foxglove visualization.
 
-The new work must preserve those interfaces. It must not modify the base drive
-plugin, replace wheel odometry, or require the lidar for this milestone.
+Current ROS-facing interfaces:
 
-## Architecture
-
-```text
-aircraft_pose.yaml
-        |
-        v
-manual aircraft frame publisher
-        |
-        v
-odom -----------------------> aircraft
- |                               |
- |                               v
- |                      perimeter_path.yaml
- |                               |
- v                               v
-base_footprint             /aircraft_path
-        \                       /
-         \                     /
-          v                   v
-             pure pursuit
-                  |
-                  v
-               /cmd_vel
-                  |
-                  v
-        Gazebo differential drive
-                  |
-                  v
-           wheel odometry only
-```
-
-The path follower may consume `/odom` for timestamps and velocity, but it must
-obtain the robot pose and path transforms through TF. It must never subscribe
-to Gazebo model-state, pose, or ground-truth topics.
-
-## Frame Contract
-
-Required TF relationships:
-
-```text
-odom
-├── base_footprint
-└── aircraft
-```
-
-- `odom -> base_footprint` is produced by the existing differential-drive wheel
-  odometry.
-- `odom -> aircraft` is initially published from `aircraft_pose.yaml`.
-- The path is always stored and published in `aircraft`.
-- The follower transforms path targets into `odom`, then transforms the active
-  lookahead target into `base_footprint` for curvature calculation.
-- No `world`, Gazebo entity, or ground-truth frame may be required by the
-  follower.
-
-## ROS Interface Contract
-
-Required inputs:
-
-| Topic / TF | Type | Purpose |
+| Interface | ROS type | Direction |
 | --- | --- | --- |
-| `/odom` | `nav_msgs/msg/Odometry` | Wheel-odometry observation and velocity evidence |
-| `/aircraft_path` | `nav_msgs/msg/Path` | Closed path with `header.frame_id=aircraft` |
-| `odom -> base_footprint` | TF | Robot pose estimate |
-| `odom -> aircraft` | TF | Manual aircraft pose, later replaceable by localization |
+| `/cmd_vel` | `geometry_msgs/msg/Twist` | ROS to Gazebo |
+| `/odom` | `nav_msgs/msg/Odometry` | Gazebo to ROS |
+| `/tf` | `tf2_msgs/msg/TFMessage` | Gazebo to ROS |
+| `/clock` | `rosgraph_msgs/msg/Clock` | Gazebo to ROS |
+| `/joint_states` | `sensor_msgs/msg/JointState` | Gazebo to ROS |
+| `/arm/joint_1/command` … `/arm/joint_6/command` | `std_msgs/msg/Float64` | ROS to Gazebo |
+| `/lift/stage_2/command` | `std_msgs/msg/Float64` | ROS to Gazebo |
+| `/lift/stage_3/command` | `std_msgs/msg/Float64` | ROS to Gazebo |
+| `/lidar/points` | `sensor_msgs/msg/PointCloud2` | Gazebo to ROS |
 
-Required output:
+The simulator does not yet provide the Basler inspection camera, Gemini
+surface-depth stream, localization cameras, obstacle cameras, ring light,
+paint-thickness sensor, Nav2, or collision-aware route planning.
 
-| Topic | Type | Constraint |
-| --- | --- | --- |
-| `/cmd_vel` | `geometry_msgs/msg/Twist` | Only `linear.x` and `angular.z` may be non-zero |
+### Current monorepo `main`
 
-Required debug outputs:
+The new baseline provides:
 
-| Topic | Type | Purpose |
-| --- | --- | --- |
-| `/path_follower/lookahead` | `geometry_msgs/msg/PointStamped` | Active lookahead target |
-| `/path_follower/closest_point` | `geometry_msgs/msg/PointStamped` | Current closest point on the tracked path |
-| `/path_follower/progress` | `std_msgs/msg/Float64` | Monotonic completed-loop fraction in `[0,1]` |
-| `/path_follower/cross_track_error` | `std_msgs/msg/Float64` | Current path error in metres |
+- deterministic device adapters as the normal Compose runtime;
+- V1 MiR relative-move and UR named-preset command lifecycles;
+- V1 legacy Lift preset commands;
+- V2 Lift position profiles and measured completion evidence;
+- V2 inspection stations, elevation segments, placement evidence, segment
+  evidence, and reports;
+- a three-station × three-segment simulation lifecycle;
+- MiR station placement through MiR service commands and snapshots;
+- Lift segment movement through the Lift V2 service boundary;
+- UR candidate validation with distinct wrist/payload pose evidence;
+- a read-only UR payload-geometry viewer;
+- deterministic surface scans, capture, inference, and Safe PLC projection;
+- Robot Orchestrator persistence and replay; and
+- separate default and hardware Compose files.
 
-Publish `/aircraft_path` with transient-local durability so RViz and late
-subscribers receive the fixed path without requiring republishing.
+Important current limitations to preserve honestly:
 
-## Target Package Layout
+- `SimulationSegmentExecutionEvidenceProvider` still synthesizes UR-stow and
+  segment-level Operational Supervision observations.
+- The V2 lifecycle validates UR waypoint eligibility but does not command the
+  Gazebo arm through each surface waypoint.
+- Approved V2 Lift profile coordinates do not currently match the Gazebo Lift
+  model's measured joint-travel range.
+- The MiR simulation floor identifiers and ROS `map`/`odom` frames are not yet
+  one explicit, versioned projection.
+
+## Scope
+
+### Included
+
+- Import simulator code into an isolated ROS workspace under
+  `simulation/gazebo/`.
+- Deduplicate raw CAD against the new root `assets/` directory.
+- Add a native integrated launch with rosbridge and optional Foxglove.
+- Add a containerized gateway under `simulation/gazebo/gateway/`.
+- Add explicit `deterministic|gazebo` backend selection to MiR, UR, and Lift
+  services.
+- Implement Gazebo adapters behind the existing service protocols.
+- Feed measured Gazebo odometry, joint state, and TF-derived state into
+  existing service responses.
+- Execute existing MiR relative moves and station placements in Gazebo.
+- Execute existing UR named presets in Gazebo and expose the corrected
+  wrist/payload/depth-camera frame geometry.
+- Execute legacy Lift presets and, after profile reconciliation, V2 Lift
+  position profiles in Gazebo.
+- Preserve deterministic adapters and scenarios as the default.
+- Run the existing V2 lifecycle with measured Gazebo evidence where an
+  existing service seam supports it.
+- Add host-compatible gateway/adapter tests and marked native Gazebo tests.
+- Update root/service documentation, project planning, and contract delivery
+  state when implementation changes them.
+
+### Excluded from the initial integration
+
+- Hardware connectivity or control.
+- Containerizing Gazebo.
+- Replacing the deterministic default.
+- Treating Gazebo contacts as collision-free planning or safety evidence.
+- Gazebo-backed payload capture, surface scanning, defect detection, or Safe
+  PLC status.
+- Moving the UR through every generated inspection waypoint before an owned,
+  command-bound execution contract exists.
+- Nav2, SLAM, obstacle-camera integration, or finalized aircraft routing.
+- Automatic archival of the standalone simulator repository.
+- Silent compatibility shims for mismatched Lift coordinates or UR frames.
+
+## Mandatory Compatibility Gates
+
+These gates precede adapter implementation.
+
+### Gate A — CAD and generated-asset ownership
+
+Root `assets/` is the canonical source for the duplicated MiR, LiftKit, UR8L,
+controller, and camera-module CAD. The simulator package owns only:
+
+- generated link-local/metre-scale derivatives;
+- reduced collision/display derivatives;
+- aircraft assets not present at the root; and
+- a machine-readable generation manifest.
+
+The manifest records root source path, SHA-256, source units, applied rotation,
+translation, scale, generated path, and generation tool revision. Build/test
+must fail when source digests change without regenerated outputs and review.
+
+Do not reference source files through brittle relative paths at Gazebo runtime.
+Install generated assets into the ROS package share directory.
+
+### Gate B — Lift position reference and reachable range
+
+Before V2 Gazebo Lift commands are enabled, determine what
+`LiftPositionProfile.target_position_mm` measures:
+
+- actuator/stage travel;
+- LiftKit top height;
+- UR mounting-plane height;
+- controller encoder position; or
+- another calibrated reference.
+
+Current evidence is incompatible:
+
+- Gazebo joint travel totals `0–500 mm`;
+- the Gazebo UR mount is approximately `876.230 mm` above `base_link` when
+  collapsed and approximately `1376.230 mm` at full simulated travel; and
+- current V2 profile targets are `880`, `1240`, and `1600 mm` in a provisional
+  `0–2000 mm` range.
+
+The gate must choose and document one of these outcomes:
+
+1. revise the Gazebo model and its verified geometry/range so the existing V2
+   profiles are physically representable; or
+2. add explicit Gazebo-only Lift profiles and a matching Planner
+   station/segment profile whose targets are representable by the current
+   model.
+
+Never scale `880/1240/1600` into `0–500`, clamp targets, or hide an offset in
+the adapter. Profile ID, revision, calibration identity, commanded coordinate,
+measured coordinate, units, and transform must remain traceable.
+
+Legacy V1 `stowed/inspection_low/inspection_high` commands may be integrated
+before this gate because their `0/250/500 mm` simulation mapping already fits
+the current model. They do not satisfy V2 lifecycle acceptance.
+
+### Gate C — UR frame and transform parity
+
+The monorepo UR service now owns distinct provisional transforms:
+
+- wrist/UR TCP to Inspection Payload TCP:
+  translation `(0.0, -0.261, 0.063) m`, rotation vector
+  `(1.571, 0.0, 0.0) rad`;
+- wrist/UR TCP to Gemini depth camera:
+  translation `(-0.023750, 0.085453, -0.029006) m`, with its separate Z/X
+  rotation sequence and current simulation correction; and
+- transform revision `inspection-policy-v1-simulation-transform-v2`.
+
+The Gemini translation must not be reused as the payload TCP transform.
+
+Gazebo needs explicit frames for:
 
 ```text
-aircraft_navigation/
-├── aircraft_navigation/
-│   ├── __init__.py
-│   ├── aircraft_frame_publisher.py
-│   ├── path_geometry.py
-│   ├── perimeter_path_publisher.py
-│   ├── pure_pursuit.py
-│   └── pure_pursuit_follower.py
-├── config/
-│   ├── aircraft_pose.yaml
-│   ├── controller.yaml
-│   └── perimeter_path.yaml
-├── launch/
-│   └── fixed_perimeter_follow.launch.py
-├── resource/
-│   └── aircraft_navigation
-├── rviz/
-│   └── perimeter_debug.rviz
-├── test/
-│   ├── test_aircraft_frame.py
-│   ├── test_path_geometry.py
-│   ├── test_pure_pursuit.py
-│   ├── test_navigation_interfaces.py
-│   └── test_perimeter_loop.py
-├── package.xml
-├── setup.cfg
-└── setup.py
+ur8l_base
+└── ur_tcp / wrist
+    ├── inspection_payload_tcp
+    └── gemini_depth_camera
 ```
 
-Add files only in the task that owns them. Do not create empty placeholders.
+`URInspectionProfile` remains the application owner. A generated simulator
+manifest carries its profile ID, revision, numeric transforms, frame names,
+and provenance into Xacro/TF. CI compares that manifest with the service-owned
+profile. An unreviewed mismatch makes Gazebo UR readiness unavailable.
 
-## Initial Controller Profile
+### Gate D — simulation floor projection
 
-Use the following as named, validated starting values in `controller.yaml`:
+Define one versioned mapping among:
 
-```yaml
-control_rate_hz: 20.0
-lookahead_distance_m: 1.0
-nominal_linear_speed_mps: 0.3
-maximum_linear_speed_mps: 0.5
-minimum_linear_speed_mps: 0.05
-maximum_angular_speed_radps: 0.5
-maximum_linear_acceleration_mps2: 0.4
-maximum_angular_acceleration_radps2: 0.8
-completion_tolerance_m: 0.2
-forward_search_window_points: 8
-odom_timeout_s: 0.5
-tf_timeout_s: 0.2
-```
+- Planner floor profile `floor-demo-v1` revision `1`;
+- existing MiR evidence identifiers such as `simulation-floor` and
+  `simulation-v1`;
+- ROS `map`; and
+- ROS wheel-odometry frame `odom`.
 
-These are simulation tuning values from the supplied behavior plan, not MiR
-hardware limits. Task 5 may tune them, but every change must be justified by
-recorded metrics and retained in configuration rather than hidden in code.
+The initial mapping may be identity at reset, but it must be named and reported
+as simulation-only. Do not merely relabel `odom` as achieved Planner-frame
+evidence.
 
-## Controller Behavior
+### Gate E — shared-world reset semantics
 
-At each control cycle:
+The current application exposes a MiR-only simulation reset, while Gazebo owns
+one shared world containing MiR, Lift, and UR.
 
-1. Confirm fresh `/odom`, valid TF, and a valid closed path.
-2. Transform path geometry from `aircraft` into `odom` using the current
-   `odom -> aircraft` transform.
-3. Find the closest point or segment only within a bounded forward window from
-   the retained progress position.
-4. Advance along path arc length by the configured lookahead distance.
-5. Transform the selected target into `base_footprint`.
-6. For lookahead coordinates `(x_L, y_L)`, calculate:
+Before wiring reset:
 
-   ```text
-   L_d² = x_L² + y_L²
-   curvature = 2 * y_L / L_d²
-   angular_velocity = linear_velocity * curvature
-   ```
+- decide whether Gazebo mode provides subsystem reset, coordinated world reset,
+  or restart-only reset;
+- require all device commands to be idle or terminal;
+- preserve Orchestrator replay/idempotency semantics;
+- increment a world/reset epoch; and
+- reconcile service command state after reset or restart.
 
-7. Reduce linear speed as absolute curvature increases.
-8. Clamp linear/angular velocity and acceleration to the active profile.
-9. Publish a Twist with only `linear.x` and `angular.z` populated.
-10. Publish debug targets, progress, and cross-track error.
-11. Detect completion only after monotonic progress traverses one full loop and
-    returns within the configured completion tolerance.
-12. Publish an explicit zero Twist and remain stopped after completion.
+Do not make the existing MiR reset silently reset UR and Lift without changing
+and documenting its application semantics.
 
-The controller must also publish zero velocity when odometry is stale, TF is
-missing, the path is invalid, shutdown begins, or an unhandled exception
-escapes the control update.
+## Isolation Rules
 
-## Agent Working Rules
+1. ROS/Gazebo source, generated assets, launch files, gateway code, and native
+   scripts live under `simulation/gazebo/`.
+2. Root `assets/` owns raw CAD that already exists there; the simulator does
+   not duplicate it.
+3. Normal device-service images do not install ROS, Gazebo, or `rclpy`.
+4. Device services access Gazebo only through service-local adapter clients to
+   the gateway.
+5. The gateway translates low-level execution and state. It does not own
+   actors, public idempotency, inspection workflow, permits, or durable reports.
+6. Default Compose remains runnable without ROS, Gazebo, rosbridge, or the
+   gateway.
+7. Gazebo selection fails closed. Loss or stale state never falls back to the
+   deterministic adapter.
+8. Routes above device-service application layers do not branch on Gazebo.
+9. Deterministic Safe PLC and unimplemented sensor providers remain clearly
+   labelled deterministic; they are not derived from Gazebo.
+10. After accepted import, the monorepo copy is the implementation source of
+    truth. Any later standalone-repository disposition requires a separate
+    decision.
 
-Each implementation agent must:
-
-1. Read `AGENTS.md`, this plan, and all prerequisite task handoffs.
-2. Execute one task only.
-3. Preserve all existing base, arm, lift, lidar, Foxglove, bridge, and world
-   interfaces unless the task explicitly permits a narrow integration edit.
-4. Use ROS simulation time for every navigation node.
-5. Keep geometry and control math in pure Python functions with no ROS side
-   effects so unit tests can exercise it directly.
-6. Use the system Python associated with ROS 2 Jazzy; do not introduce Conda or
-   an incompatible virtual environment.
-7. Add bounded timeouts to all TF waits, topic waits, controller loops, launch
-   tests, and cleanup.
-8. Never validate path following from Gazebo world/model pose.
-9. Update a task checkbox only after its acceptance criteria and available
-   validation pass.
-10. Leave a handoff with changed files, exact commands, results, tuning values,
-    assumptions, and unresolved blockers.
-
-## Stop-and-Ask Conditions
-
-Stop and ask the project owner before continuing if:
-
-- the imported aircraft nose or centre cannot be verified from the current
-  model configuration;
-- the verified `odom -> aircraft` transform differs materially from the
-  provisional `(0, 12, pi)` contract;
-- the 1 m path centreline cannot be kept outside aircraft collision geometry;
-- the MiR footprint collides with the aircraft while its centre follows the
-  requested 1 m-clearance path;
-- the initial robot placement cannot be made beside the nose waypoint without
-  changing the normal `base_sim.launch.py` default;
-- wheel odometry or `odom -> base_footprint` is unavailable or requires Gazebo
-  ground truth;
-- another `/cmd_vel` publisher remains active during autonomous following;
-- the lift cannot remain collapsed or the arm cannot be placed in its
-  documented stow pose before base motion;
-- a proposed fix would add Nav2, SLAM, a map, ground-truth pose, or obstacle
-  replanning; or
-- completion requires changing an existing public topic or frame contract.
-
-## Dependency Order
+## Target Architecture
 
 ```text
-Task 1: Package and baseline odometry proof
-    ↓
-Task 2: Aircraft frame and navigation spawn contract
-    ↓
-Task 3: Clockwise 1 m perimeter path
-    ↓
-Task 4: Pure Pursuit math and unit tests
-    ↓
-Task 5: Follower node, safety, progress, and metrics
-    ↓
-Task 6: Opt-in integrated launch
-    ↓
-Task 7: Full-loop headless test and operator documentation
+Default mode
+============
+
+Browser -> Control API -> Robot Orchestrator -> MiR / UR / Lift services
+                                                |      |      |
+                                                v      v      v
+                                      deterministic service adapters
+
+
+Gazebo-backed mode
+==================
+
+Browser -> Control API -> Robot Orchestrator -> MiR / UR / Lift services
+                                                |      |      |
+                                                v      v      v
+                                       service-local Gazebo adapters
+                                                  |
+                                                  | private HTTP
+                                                  v
+                            +----------------------------------------+
+Docker Compose              | Gazebo gateway                         |
+                            | state, execution, timeout, normal stop |
+                            +-------------------+--------------------+
+                                                |
+                                                | rosbridge WebSocket
+============================= native boundary ==|============================
+                                                v
+Native Ubuntu 24.04                    rosbridge_server
+                                                |
+                                       ROS 2 topics / TF
+                                                |
+                                         ros_gz_bridge
+                                                |
+                                      Gazebo Harmonic world
 ```
 
-Tasks are intentionally sequential. Do not parallelize work that changes the
-same package or relies on unverified geometry/TF decisions.
+The gateway belongs to the optional Compose overlay. Gazebo and ROS remain
+native.
 
-## Task 1 — Scaffold the Package and Prove the Odometry Baseline
+## Target Monorepo Layout
 
-- [ ] Complete
-
-### Goal
-
-Create the Python package and prove the existing wheel-odometry contract before
-adding autonomous behavior.
-
-### Allowed Scope
-
-- New `aircraft_navigation` package metadata and Python module scaffold.
-- Package-level lint/test configuration.
-- A focused baseline test or diagnostic script.
-- No aircraft TF, path, controller, RViz configuration, or `/cmd_vel` output.
-
-### Work
-
-- Create an `ament_python` package with explicit dependencies on `rclpy`,
-  `geometry_msgs`, `nav_msgs`, `std_msgs`, `tf2_ros`, and ROS launch tooling.
-- Confirm `/odom` uses `frame_id=odom` and `child_frame_id=base_footprint`.
-- Confirm TF contains `odom -> base_footprint` and tracks the same translation
-  and yaw as `/odom` while keyboard commands move the base.
-- Confirm no Gazebo pose/model-state topic is needed for this observation.
-- Add standard Python lint tests supported by the ROS environment.
-
-### Acceptance Criteria
-
-- `colcon build --symlink-install --packages-select aircraft_navigation`
-  passes.
-- The installed package is discoverable with `ros2 pkg prefix`.
-- A bounded manual or automated check proves X/Y/yaw changes consistently in
-  `/odom` and TF.
-- The package contains no publisher for `/cmd_vel` yet.
-- No ground-truth dependency is declared or consumed.
-
-### Validation
-
-```bash
-colcon build --symlink-install --packages-select aircraft_navigation
-source install/setup.bash
-ros2 pkg prefix aircraft_navigation
-ros2 launch burke_gazebo base_sim.launch.py gui:=false foxglove:=false
-ros2 topic echo --once /odom
-ros2 run tf2_ros tf2_echo odom base_footprint
+```text
+bombardier_burk-e_monorepo/
+├── assets/                              # canonical raw CAD already on main
+├── compose.yaml                         # deterministic default
+├── compose.hardware.yaml                # existing hardware commissioning overlay
+├── compose.gazebo.yaml                  # new, mutually exclusive simulation overlay
+├── simulation/
+│   └── gazebo/
+│       ├── README.md
+│       ├── .gitignore
+│       ├── config/
+│       │   ├── asset_manifest.yaml
+│       │   ├── frames.yaml
+│       │   ├── gateway.yaml
+│       │   ├── lift_profiles.yaml
+│       │   └── ur_geometry_profile.yaml
+│       ├── ros_ws/
+│       │   └── src/
+│       │       ├── aircraft_navigation/
+│       │       ├── burke_description/
+│       │       └── burke_gazebo/
+│       ├── gateway/
+│       │   ├── Dockerfile
+│       │   ├── pyproject.toml
+│       │   ├── src/burke_gazebo_gateway/
+│       │   └── tests/
+│       └── scripts/
+│           ├── check_native_prerequisites.sh
+│           ├── generate_assets.sh
+│           ├── build_native.sh
+│           ├── run_native.sh
+│           └── stop_native.sh
+└── backend/services/
+    ├── mir_service/.../adapters/gazebo.py
+    ├── ur_service/.../adapters/gazebo.py
+    └── lift_service/.../adapters/gazebo.py
 ```
 
-### Handoff
+Do not commit ROS `build/`, `install/`, or `log/`, runtime databases, captured
+output, generated reports, or duplicate raw CAD.
 
-Record the observed odometry frame IDs, TF relationship, update behavior, and
-proof that no ground-truth topic was consumed.
+## Runtime Selection
 
-## Task 2 — Define the Aircraft Frame and Nose-Start Spawn Contract
+Keep the existing outer mode and add a selector only to the three affected
+device services:
 
-- [ ] Complete
-
-### Prerequisite
-
-Task 1.
-
-### Goal
-
-Publish the manually configured aircraft frame and define a navigation-only
-spawn pose beside the future nose waypoint.
-
-### Allowed Scope
-
-- `aircraft_navigation/config/aircraft_pose.yaml`
-- `aircraft_frame_publisher.py`
-- Focused frame tests.
-- Launch arguments or a narrow reusable spawn-pose interface in
-  `burke_gazebo/launch/base_sim.launch.py`.
-- Normal base-simulation defaults must remain unchanged.
-- No path or controller.
-
-### Work
-
-- Verify the aircraft projected centre and nose direction from the current
-  world configuration and imported collision mesh.
-- Define `aircraft` at the projected aircraft centre with `+X` toward the nose.
-- Publish `odom -> aircraft` with a `StaticTransformBroadcaster` from validated
-  YAML configuration.
-- Freeze the exact provisional translation/yaw after verifying how wheel
-  odometry initializes when the base is spawned away from the world origin.
-- Add optional spawn arguments to the existing base launch only if needed;
-  preserve `(0,0,0)` as its default.
-- Define a navigation spawn contract that will place `base_footprint` beside P0
-  and align the MiR with the clockwise tangent once P0 exists in Task 3.
-- Do not read the Gazebo aircraft entity pose at runtime.
-
-### Acceptance Criteria
-
-- `odom -> aircraft` is available from configuration with simulation time.
-- The aircraft frame origin and axes match the confirmed centre/nose contract.
-- Changing YAML aircraft pose moves the TF without changing publisher code.
-- The normal base launch still spawns at its original default pose.
-- The navigation spawn can be configured without editing the world SDF.
-- No path or follower depends on how the aircraft transform is produced.
-
-### Validation
-
-```bash
-ros2 run tf2_ros tf2_echo odom aircraft
-ros2 run tf2_ros tf2_echo aircraft base_footprint
+```text
+BURKE_HARDWARE_MODE=simulation
+BURKE_SIMULATION_BACKEND=deterministic   # default
 ```
 
-### Handoff
+Gazebo override:
 
-Record the exact transform, axis convention, spawn interface, odometry-origin
-behavior, and any remaining simulation assumptions.
-
-## Task 3 — Define and Publish the Clockwise 1 m Perimeter Path
-
-- [x] Complete
-
-### Prerequisite
-
-Task 2.
-
-### Goal
-
-Create a validated closed path in `aircraft` that starts at the nose, follows
-the concave top-down aircraft footprint, and remains within the configured
-1.0–1.5 m clearance band.
-
-### Allowed Scope
-
-- `perimeter_path.yaml`
-- `path_geometry.py`
-- `perimeter_path_publisher.py`
-- Pure path/configuration tests.
-- No controller or `/cmd_vel` publication.
-
-### Work
-
-- Project every collision-mesh triangle onto aircraft XY, rasterize the union,
-  and extract its exterior contour without replacing it with a convex hull.
-- Generate a circular buffered perimeter from that concave footprint using a
-  1.2 m construction radius, then validate the resulting path against the
-  stored footprint.
-- Generate enough ordered waypoints that consecutive poses are no more than
-  1.0 m apart.
-- Place P0 at the positive-X nose and orient each pose toward the next pose;
-  the final pose points back to P0.
-- Order points clockwise when viewed from `+Z`.
-- Close the loop explicitly without creating a zero-length final segment.
-- Preserve concave fuselage, wing, and tail transitions from the exterior
-  union boundary; add intermediate points where raster buffering requires it.
-- Validate finite values, unique consecutive points, non-zero segments,
-  clockwise signed area, closure, 1.0–1.5 m clearance, and maximum 1.0 m pose
-  spacing.
-- Calculate the P0 tangent from P0 to P1 for the navigation spawn.
-- Publish a transient-local `nav_msgs/msg/Path` on `/aircraft_path` with every
-  pose in `aircraft`, planar unit orientation, and yaw toward the next pose.
-
-### Acceptance Criteria
-
-- The path contains non-degenerate ordered points with no consecutive spacing
-  greater than 1.0 m.
-- P0 is the nose waypoint.
-- Signed geometry verifies clockwise order.
-- The projected triangle union has a concave exterior footprint; no convex-hull
-  bridging is used.
-- Every path segment stays at least 1.0 m and no farther than 1.5 m from the
-  projected collision footprint within an explicitly documented numerical
-  tolerance.
-- The path is closed and has a stable total arc length.
-- `/aircraft_path` has `header.frame_id=aircraft` and transient-local QoS.
-- Each pose orientation points toward the next waypoint, including closure.
-- Path publication requires no Gazebo pose topic or Nav2 dependency.
-
-### Validation
-
-```bash
-ros2 topic info --verbose /aircraft_path
-ros2 topic echo --once /aircraft_path
+```text
+BURKE_HARDWARE_MODE=simulation
+BURKE_SIMULATION_BACKEND=gazebo
+GAZEBO_GATEWAY_BASE_URL=http://gazebo_gateway:8091
 ```
 
-The footprint and perimeter can be regenerated from the collision mesh with:
+Rules:
 
-```bash
-python3 aircraft_navigation/scripts/generate_perimeter_path.py \
-  burke_description/cad/stl/challenger_collision.stl \
-  aircraft_navigation/config/perimeter_path.yaml
-```
+- Allowed backends are `deterministic` and `gazebo`.
+- Omission selects `deterministic` and preserves current behavior.
+- `gazebo` is invalid outside `BURKE_HARDWARE_MODE=simulation`.
+- Gateway URL, timeout, and freshness settings are required only for Gazebo.
+- Values are validated before adapter construction.
+- Adapter construction makes no network call; connection occurs during service
+  lifespan startup.
+- Public readiness remains `simulated`; detail/evidence identifies the backend
+  and active simulation profile/revision.
+- Only MiR, UR, and Lift receive the Gazebo selector in the override.
+- Combining `compose.gazebo.yaml` with `compose.hardware.yaml` is rejected or
+  documented as unsupported. It must not produce a mixed implicit runtime.
 
-### Handoff
+## Native ROS Contract
 
-Record the projected-union method, footprint and waypoint counts, total length,
-clearance range, maximum pose spacing, signed area, P0 coordinates, P0 tangent
-yaw, and confirmation that waypoint orientations follow the next pose.
+Add `integrated_stack.launch.py` under `burke_gazebo`. It starts:
 
-## Task 4 — Implement Pure Pursuit as Tested Pure Python Logic
-
-- [x] Complete
-
-### Prerequisite
-
-Task 3.
-
-### Goal
-
-Implement path projection, progress, lookahead selection, curvature, speed
-selection, and rate limiting without ROS side effects.
-
-### Allowed Scope
-
-- `path_geometry.py`
-- `pure_pursuit.py`
-- Unit tests and fixtures.
-- No ROS node, TF listener, launch changes, or `/cmd_vel` publisher.
-
-### Work
-
-- Represent the closed path by segments and cumulative arc length.
-- Project a robot point onto candidate segments.
-- Track continuous progress modulo total loop length.
-- Search for the closest point only in a bounded forward window around retained
-  progress; never globally jump backward near adjacent sections.
-- Select a lookahead point by advancing configured arc length with wraparound.
-- Transform target coordinates into the robot frame through pure 2D math used
-  by unit tests.
-- Implement curvature `2*y/L²` with protection for near-zero lookahead distance.
-- Reduce linear speed as curvature grows, then clamp to configured min/max.
-- Clamp angular speed and linear/angular acceleration per control step.
-- Return an explicit zero command for invalid, non-finite, or degenerate input.
-
-### Required Unit Cases
-
-- Straight path and centred robot.
-- Left and right curves with correct angular sign.
-- Near-zero lookahead distance.
-- Closed-loop wraparound at P0.
-- Robot near two spatially close but distant-in-progress segments.
-- Forward-window tracking without backward jumps.
-- Curvature-based speed reduction.
-- Linear and angular acceleration limiting.
-- Non-finite input rejection.
-- One-loop progress and completion threshold logic.
-
-### Acceptance Criteria
-
-- Pure unit tests require no ROS graph, Gazebo, or display.
-- Identical inputs produce identical outputs.
-- Only forward linear velocity and yaw rate are produced.
-- Progress does not jump backward or skip across nearby path sections.
-- Every configured bound and invalid-input branch is covered.
-
-### Validation
-
-```bash
-colcon test --packages-select aircraft_navigation --event-handlers console_direct+
-colcon test-result --verbose
-```
-
-### Handoff
-
-Record the math API, progress representation, wraparound rules, test cases, and
-coverage of all safety bounds.
-
-## Task 5 — Implement the Pure Pursuit Follower Node
-
-- [x] Complete
-
-### Prerequisite
-
-Task 4.
-
-### Goal
-
-Connect the tested controller logic to ROS topics and TF while remaining
-fail-closed.
-
-### Allowed Scope
-
-- `pure_pursuit_follower.py`
-- `controller.yaml`
-- Node-level tests and debug topics.
-- No integrated autonomous launch yet.
-
-### Work
-
-- Load and validate every controller parameter at node construction.
-- Subscribe to `/odom` and transient-local `/aircraft_path`.
-- Use `tf2_ros.Buffer` and `TransformListener` for `odom`, `aircraft`, and
-  `base_footprint` transforms.
-- Run at the configured 20 Hz simulation-time rate.
-- Preserve progress across path updates only when path identity/geometry is
-  unchanged; otherwise stop and reset deterministically.
-- Publish `/cmd_vel`, lookahead, closest point, progress, and cross-track error.
-- Populate only `linear.x` and `angular.z`; all other Twist fields remain zero.
-- Publish zero on stale odometry, missing/stale TF, invalid path, completion,
-  shutdown, and controller exceptions.
-- Detect exactly one completed loop using retained continuous progress, not
-  nearest-point coincidence at P0.
-- Record maximum and RMS cross-track error, maximum heading error, progress
-  regressions, command bounds, acceleration bounds, execution time, and final
-  completion state in a final structured log summary.
-- Refuse to command while another unexpected `/cmd_vel` publisher is active if
-  reliable publisher discovery can enforce this without race-prone behavior;
-  otherwise document the exclusive-publisher operational requirement and test
-  it in Task 7.
-
-### Acceptance Criteria
-
-- The node publishes no non-zero command before odometry, path, and TF are
-  ready.
-- Normal output never exceeds configured velocity or acceleration bounds.
-- Loss of any required input produces zero within a bounded interval.
-- One-loop completion produces zero and cannot restart without relaunch/reset.
-- Debug topics match the controller's internal active targets and errors.
-- Node tests use synthetic messages/TF and require no Gazebo ground truth.
-
-### Validation
-
-```bash
-ros2 run aircraft_navigation pure_pursuit_follower --ros-args \
-  --params-file $(ros2 pkg prefix aircraft_navigation)/share/aircraft_navigation/config/controller.yaml
-```
-
-### Handoff
-
-Record parameter validation, freshness rules, stop behavior, completion state
-machine, debug topics, metrics, and node-test results.
-
-## Task 6 — Add the Opt-In Fixed-Perimeter Launch
-
-- [x] Complete
-
-### Prerequisite
-
-Task 5.
-
-### Goal
-
-Provide a separate launch that starts the existing simulation at the nose and
-runs the manual aircraft frame, path publisher, RViz option, and follower.
-
-### Allowed Scope
-
-- `fixed_perimeter_follow.launch.py`
-- Narrow reusable launch arguments in `base_sim.launch.py`.
-- Package installation metadata.
-- No changes to the normal base-simulation defaults.
-
-### Work
-
-- Include `burke_gazebo/base_sim.launch.py` with Foxglove optional and with the
-  navigation-specific spawn pose beside P0.
-- Start the aircraft-frame publisher and perimeter-path publisher.
-- Start RViz only behind a launch argument.
-- Keep the follower opt-in within this separate launch; normal base simulation
-  remains manually controlled.
-- Ensure LiftKit remains collapsed and place the UR arm in its documented stow
-  pose before allowing non-zero base motion. Use existing command interfaces;
-  do not add arm/lift orchestration architecture in this milestone.
-- Confirm no keyboard teleoperation or other `/cmd_vel` publisher is running.
-- Sequence startup with readiness checks or a small dedicated gate rather than
-  an unexplained sleep.
-- On shutdown, publish zero `/cmd_vel` and leave lift/arm in their safe state.
-
-### Operator Command
-
-```bash
-ros2 launch aircraft_navigation fixed_perimeter_follow.launch.py
-```
+1. the existing world and robot;
+2. `robot_state_publisher` with simulation time;
+3. existing ROS/Gazebo topic bridges;
+4. rosbridge WebSocket on a configured host port;
+5. optional Foxglove on its separate port;
+6. the reviewed simulation floor-frame projection; and
+7. no autonomous movement.
 
 Required launch arguments:
 
-- `gui` default `true`;
-- `rviz` default `true`;
-- `foxglove` default `false`;
-- `autostart` default `true` for this dedicated launch;
-- aircraft pose/config paths;
-- path/controller config paths; and
-- spawn pose derived from P0 and its clockwise tangent.
+| Argument | Purpose |
+| --- | --- |
+| `gui` | enable/disable Gazebo client |
+| `rosbridge_address`, `rosbridge_port` | container-to-native transport |
+| `foxglove`, `foxglove_port` | independent visualization |
+| `spawn_x`, `spawn_y`, `spawn_z`, `spawn_yaw` | deterministic initial base pose |
+| `aircraft_frame` | preserve explicit aircraft transform |
+| `simulation_profile` | bind floor, UR geometry, Lift, and reset profile revisions |
 
-### Acceptance Criteria
+Verify the installed Jazzy/Harmonic reset and entity-state service types before
+adding service bridges. If reliable reset is unavailable, use an explicit
+restart-based workflow. Do not guess a `ros_gz` service mapping.
 
-- The dedicated launch starts one simulation, one robot, one aircraft-frame
-  publisher, one path publisher, and one follower.
-- The MiR appears beside the nose P0 with the expected orientation.
-- `base_sim.launch.py` alone still uses its original pose and starts no
-  navigation nodes.
-- Launch startup has no fixed timing race.
-- Shutdown sends zero and terminates all owned processes.
-- Existing arm, lift, lidar, bridge, and optional Foxglove interfaces remain
-  available.
+Expected frame tree after compatibility gates:
 
-### Handoff
-
-Record the complete launch graph, resolved spawn pose, readiness sequence,
-arguments, and regression results for normal base simulation.
-
-## Task 7 — Validate One Full Clockwise Loop and Document Operation
-
-- [ ] Complete
-
-### Prerequisite
-
-Task 6.
-
-### Goal
-
-Prove the requested behavior end to end using only wheel odometry for robot
-state.
-
-### Allowed Scope
-
-- `test_navigation_interfaces.py`
-- `test_perimeter_loop.py`
-- Test registration/dependencies.
-- `README.md` navigation usage and troubleshooting.
-- Minimal fixes to Tasks 2–7 only when a test proves a defect.
-
-### Interface Test Requirements
-
-Verify with bounded waits:
-
-1. `/odom` and `odom -> base_footprint` agree on robot motion.
-2. `odom -> aircraft` matches configuration.
-3. `/aircraft_path` is closed, clockwise, transient-local, and expressed in
-   `aircraft`.
-4. P0 and spawn pose are at the nose with the expected tangent alignment.
-5. Exactly one intended autonomous `/cmd_vel` publisher is active.
-6. Debug topics use the documented types and frames.
-7. No node in `aircraft_navigation` subscribes to a Gazebo ground-truth topic.
-
-### Full-Loop Test Requirements
-
-Run headlessly and:
-
-1. Start the dedicated launch with RViz and Foxglove disabled.
-2. Wait for all required topics and TF with explicit timeouts.
-3. Confirm lift collapsed and arm stowed before first non-zero base command.
-4. Observe progress monotonically from near zero to one full loop.
-5. Record cross-track error, heading error, commands, acceleration, execution
-   time, and progress regressions.
-6. Confirm every command stays within the active profile.
-7. Confirm the robot completes the loop clockwise without collision or
-   oscillatory reversal.
-8. Confirm completion publishes zero and the base remains stopped for a
-   bounded observation period.
-9. Confirm the controller does not begin a second loop.
-10. Shut down cleanly and retain actionable logs on failure.
-
-The test may use `/odom`, TF, commands, progress, and debug topics. It must not
-use Gazebo world/model pose to score tracking or completion.
-
-### Tuning and Metric Acceptance
-
-- Start with the controller profile in this plan.
-- Tune only configuration values, not hidden literals.
-- Record before/after metrics for every tuning change.
-- Freeze final maximum/RMS cross-track and heading-error acceptance thresholds
-  from the first stable baseline, with explicit rationale in the test and
-  README.
-- If a stable loop requires changing the requested 1 m aircraft clearance,
-  stop and ask rather than changing the path silently.
-
-### Acceptance Criteria
-
-- One full clockwise loop completes from the nose start.
-- The path centreline remains the validated 1 m from aircraft geometry.
-- Robot state comes only from wheel odometry and TF.
-- The controller stops after one loop and stays stopped.
-- Nav2, SLAM, maps, lidar localization, and Gazebo ground truth are absent.
-- Repeated headless runs pass with the frozen metric thresholds.
-- Manual GUI/RViz validation shows the path and lookahead geometry correctly.
-- Existing base, lift, arm, lidar, and Foxglove tests still pass.
-- README documents build, launch, configuration, path editing, metrics,
-  shutdown, and troubleshooting.
-
-### Validation
-
-Run from the outer ROS workspace root:
-
-```bash
-colcon build --symlink-install --packages-select \
-  burke_description burke_gazebo aircraft_navigation
-source install/setup.bash
-colcon test --packages-select \
-  burke_description burke_gazebo aircraft_navigation \
-  --event-handlers console_direct+
-colcon test-result --verbose
-ros2 launch aircraft_navigation fixed_perimeter_follow.launch.py
+```text
+map                                  simulation floor projection
+└── odom                             wheel odometry, identity at reset only
+    ├── base_footprint
+    │   └── base_link
+    │       └── Lift and UR hierarchy
+    │           └── ur_tcp
+    │               ├── inspection_payload_tcp
+    │               └── gemini_depth_camera
+    └── aircraft
 ```
 
-### Handoff
+The application floor profile may map to `map`; it is not necessarily a TF
+frame. That mapping must carry the simulation profile and revision.
 
-Record repeated-run count, final parameters, metric thresholds/results,
-completion time, stop observation, absence of ground-truth subscriptions,
-manual RViz result, and all regression results.
+## Gazebo Gateway Boundary
 
-## Milestone Definition of Done
+The gateway owns:
 
-- [ ] `odom -> base_footprint` is the only robot-pose source used by the
-      follower.
-- [ ] A configurable manual `odom -> aircraft` transform is published.
-- [ ] The aircraft frame is centred with `+X` toward the nose.
-- [ ] A 10–30 point clockwise closed path starts at the nose and maintains a
-      validated 1 m centreline clearance.
-- [ ] The path is published as transient-local `nav_msgs/msg/Path` in
-      `aircraft`.
-- [ ] The MiR spawns beside P0 aligned with the clockwise tangent only in the
-      dedicated navigation launch.
-- [ ] RViz shows frames, robot, path, closest point, and lookahead.
-- [ ] The Python Pure Pursuit follower commands only `linear.x` and
-      `angular.z`.
-- [ ] Progress cannot jump backward across nearby path sections.
-- [ ] Curvature-based speed reduction and configured rate limits are active.
-- [ ] Missing/stale inputs, exceptions, shutdown, and completion produce an
-      explicit zero command.
-- [ ] The MiR completes exactly one clockwise loop and remains stopped.
-- [ ] Tracking and motion metrics are recorded with frozen acceptance
-      thresholds.
-- [ ] Nav2, SLAM, occupancy maps, obstacle replanning, lidar localization, and
-      Gazebo ground truth are not used.
-- [ ] Replacing the manual aircraft-frame publisher later will not require
-      changes to the path publisher or follower.
-- [ ] Normal `base_sim.launch.py` remains manually controlled and retains its
-      original defaults.
+- rosbridge connection lifecycle;
+- subscriptions to `/clock`, `/odom`, `/tf`, `/tf_static`, and
+  `/joint_states`;
+- publishers for `/cmd_vel`, six UR joint targets, and two Lift stage targets;
+- bounded state caches and sequence/reset epochs;
+- one active execution per subsystem;
+- MiR relative-motion control;
+- measured completion, dwell, no-progress, and wall-time timeout logic;
+- normal-stop/hold behavior; and
+- capability/readiness reporting.
 
-## Deferred Follow-Up
+It does not own:
 
-After this milestone, plan separately:
+- public actor or idempotency policy;
+- Planner station/segment selection;
+- device-service position or geometry profiles;
+- Orchestrator persistence/replay;
+- Operational Supervision or Safe PLC decisions;
+- inspection capture/reporting; or
+- hardware safety.
 
-1. Use the front-deck 3D lidar and/or depth cameras to estimate aircraft pose.
-2. Replace the manual `odom -> aircraft` publisher with localization output.
-3. Recenter the existing aircraft-relative path as localization updates.
-4. Add obstacle observation and bounded path replanning.
-5. Convert selected path locations into inspection stations.
-6. Coordinate base motion with LiftKit, UR8L, and payload inspection behavior.
+Private resources:
 
-## Reference Sources
+| Resource | Purpose |
+| --- | --- |
+| `GET /healthz` | process health |
+| `GET /readyz` | rosbridge and required-state freshness |
+| `GET /v1/capabilities` | supported operations, frames, scenarios, and profile revisions |
+| `GET /v1/world` | world/reset epoch and simulator time |
+| `PUT /v1/world` | coordinated idle-only reset when Gate E permits it |
+| `GET /v1/mir/state` | measured pose/twist and active execution |
+| `POST/GET/DELETE /v1/mir/executions...` | bounded relative motion/status/normal stop |
+| `GET /v1/ur/state` | measured joints and TF-derived wrist/payload/camera poses |
+| `POST/GET/DELETE /v1/ur/executions...` | joint target/status/hold |
+| `GET /v1/lift/state` | measured stages plus resolved profile coordinate |
+| `POST/GET/DELETE /v1/lift/executions...` | stage target/status/hold |
 
-- ROS 2 Jazzy Python package and launch conventions:
-  <https://docs.ros.org/en/jazzy/Tutorials/Intermediate/Launch/Launch-system.html>
-- ROS 2 Jazzy Python package development:
-  <https://docs.ros.org/en/jazzy/How-To-Guides/Developing-a-ROS-2-Package.html>
-- ROS 2 Jazzy Python environment guidance:
-  <https://docs.ros.org/en/jazzy/How-To-Guides/Using-Python-Packages.html>
-- ROS 2 Jazzy `nav_msgs`, including `Path` and `Odometry`:
-  <https://docs.ros.org/en/jazzy/p/nav_msgs/README.html>
-- ROS 2 Jazzy Python TF listener implementation:
-  <https://docs.ros.org/en/jazzy/p/tf2_ros_py/_modules/tf2_ros/transform_listener.html>
+The gateway receives resolved numeric targets and profile identity from device
+services. It does not accept Planner profile IDs as command policy.
+
+### State and time rules
+
+- Use `/clock` as simulator time.
+- Use monotonic wall time for freshness and bounded liveness because Gazebo can
+  pause.
+- Use UTC gateway-reception timestamps for monorepo `observed_at`; retain
+  simulator time separately in gateway-only evidence.
+- Reject non-finite values, unknown/duplicate joints, missing TF, stale state,
+  profile mismatch, and out-of-range targets.
+- Never present cached state as fresh after its limit.
+- Increment a reset epoch after every accepted coordinated reset/restart.
+- Publish zero `/cmd_vel` on completion, cancellation, timeout, shutdown, and
+  connection loss when publication is possible.
+- Hold latest measured UR/Lift positions on normal cancellation.
+- Completion requires measured in-tolerance state for the profile-owned dwell
+  period, not successful publication.
+- Disconnection, restart, unowned motion, timeout, and ambiguous stop become
+  explicit failed or unknown outcomes.
+
+## Device Mapping
+
+### MiR1350
+
+Implement the existing MiR adapter protocol:
+
+| Service operation | Gazebo behavior |
+| --- | --- |
+| readiness | fresh gateway, clock, odometry, and required TF |
+| enqueue | validate service-owned MiR motion profile and queue command |
+| start | create one gateway relative execution |
+| status | map measured execution to existing mission/command states |
+| abort | zero velocity and confirm stopped or unknown |
+| snapshot | measured pose, target, trail, world ID, and lifecycle state |
+| placement evidence | existing `MiRServiceClient.execute_simulation_placement` consumes the snapshot automatically |
+
+The controller supports existing robot-relative `x_m`, `y_m`, and
+`orientation_deg` requests. Differential-drive lateral displacement is a
+bounded rotate/drive/rotate or path-following sequence, never strafing.
+
+Initial Gazebo scenario support is `normal`. Existing deterministic
+`blocked/failure/stale` scenarios remain available only on the deterministic
+backend until deliberate Gazebo fault injection exists. Gazebo collision
+physics and no-progress timeout are limited blocked evidence, not obstacle-aware
+planning.
+
+The aircraft perimeter follower remains an opt-in ROS demonstration and does
+not implement the application relative-move contract.
+
+### UR8L
+
+Implement existing `URAdapter`, `URCommandAdapter`, and simulation reset
+capabilities:
+
+- service owns named presets and speed/acceleration policy;
+- adapter resolves `home` and `inspection_start` into numeric targets;
+- gateway publishes targets only after explicit command start;
+- status uses all six measured joint names and dwell tolerance;
+- state uses TF-derived wrist TCP;
+- payload geometry uses the Gate C manifest and reports separate wrist,
+  Inspection Payload TCP, and Gemini frames;
+- queue/start/status/cancel, actor, and idempotency semantics remain unchanged;
+- unowned motion or transform/profile mismatch makes readiness unavailable;
+  and
+- hardware RTDE mode remains unchanged and read-only.
+
+The current Gazebo position controllers use fixed limits. Do not claim a
+requested speed/acceleration was dynamically enforced unless controller support
+is implemented and observed.
+
+The current V2 lifecycle does not command each surface waypoint. Initial
+acceptance proves named UR commands and corrected measured geometry through the
+existing viewer/API. A future waypoint-execution slice requires an owned public
+contract, permit binding, measured arrival, collision evidence, and
+Orchestrator reconciliation.
+
+### LiftKit
+
+Implement both legacy and V2 protocols:
+
+- V1 named presets remain supported for viewer/manual compatibility;
+- V2 accepts only a Lift-service-resolved `LiftPositionProfile`;
+- gateway receives stage targets plus profile/calibration identity;
+- state observes both prismatic joints;
+- adapter converts measured joints into the reviewed profile coordinate from
+  Gate B;
+- completion uses V2 tolerance, settling time, velocity, and freshness;
+- public evidence retains commanded/measured millimetres, profile
+  ID/revision, calibration ID, and absence reason; and
+- reset/cancel/restart preserve unknown-outcome semantics.
+
+Do not keep the prior plan's unconditional V2 mapping:
+
+```text
+stowed=0 mm, low=250 mm, high=500 mm
+```
+
+Those are legacy simulator presets only. They are not substitutes for the new
+`fuselage-lower/mid/upper` V2 profiles.
+
+### Existing V2 lifecycle
+
+Gazebo integration should reuse the existing lifecycle:
+
+```text
+Planner V2 station/segment profile
+  -> MiR service placement
+  -> station evidence
+  -> current UR-stow/operational evidence provider
+  -> Lift V2 profile command
+  -> deterministic surface scan + UR candidate validation
+  -> deterministic capture/inference
+  -> durable V2 station/segment report
+```
+
+After adapter integration:
+
+- MiR placement evidence comes from Gazebo odometry through the MiR service;
+- Lift evidence comes from Gazebo joint state after Gate B;
+- UR named-command/viewer evidence can come from Gazebo;
+- surface scan/capture/inference/Safe PLC projection remain deterministic; and
+- current synthetic UR-stow/segment supervision evidence remains explicitly
+  identified until replaced through an owned service-backed seam.
+
+Do not call the lifecycle “fully Gazebo-driven” while any of those providers
+remain deterministic.
+
+## Compose Integration
+
+Add `compose.gazebo.yaml` without changing default `compose.yaml` semantics.
+The overlay:
+
+- builds `gazebo_gateway` from `simulation/gazebo/gateway/`;
+- connects the gateway to native rosbridge via `host.docker.internal`;
+- adds Linux `host-gateway` explicitly;
+- selects Gazebo only for MiR, UR, and Lift;
+- leaves Planner, Surface Waypoint, Payload, Defect Detection, reporting, and
+  Operational Supervision simulation providers deterministic;
+- does not add hardware endpoints, credentials, or controller identities;
+- starts the UI/API even when native Gazebo is temporarily unavailable so
+  readiness can report the failure; and
+- is not combined with `compose.hardware.yaml`.
+
+Operator flow:
+
+```bash
+# Terminal 1 — native Ubuntu
+./simulation/gazebo/scripts/check_native_prerequisites.sh
+./simulation/gazebo/scripts/build_native.sh
+./simulation/gazebo/scripts/run_native.sh --headless
+
+# Terminal 2 — application stack
+docker compose -f compose.yaml -f compose.gazebo.yaml up --build
+```
+
+Default mode remains:
+
+```bash
+docker compose up --build
+```
+
+## Ordered Implementation Tasks
+
+Complete a task only after its acceptance criteria pass.
+
+### Task 0 — Rebase the implementation branch on evaluated `main`
+
+- [ ] Start from `main` at or after `58caed59` on a non-main branch/worktree.
+- [ ] Re-read root `AGENTS.md`, `README.md`, `GLOSSARY.md`, and
+      `PROJECT_PLANNING.md`.
+- [ ] Recheck Lift, UR, MiR, Orchestrator, Planner, and Operational Supervision
+      plans/tests for changes after this document's evaluated commit.
+- [ ] Record current source and destination SHAs in the handoff.
+
+Acceptance:
+
+- No implementation is based on the stale `908e7bc` tree.
+- Existing working-tree changes are preserved.
+- Any newer contract/profile change is reflected before import begins.
+
+### Task 1 — Import the ROS workspace and deduplicate assets
+
+- [ ] Create `simulation/gazebo/ros_ws/src/`.
+- [ ] Import the three ROS packages without changing their baseline behavior.
+- [ ] Create the root-asset mapping/generation manifest.
+- [ ] Remove duplicated raw MiR/Lift/UR/controller/payload CAD from the imported
+      package.
+- [ ] Generate link-local/metre-scale simulator assets from root `assets/`.
+- [ ] Keep aircraft assets inside the simulator package.
+- [ ] Add local ignore rules and update simulator README paths.
+- [ ] Record standalone source commit and generated-asset digests.
+
+Acceptance:
+
+- Every duplicated raw CAD source resolves to the root asset with matching
+  SHA-256.
+- Generated assets reproduce current visuals/collisions.
+- Native `colcon build --symlink-install` and existing ROS tests pass.
+- Existing default Compose remains valid.
+
+### Task 2 — Resolve frame, Lift, and reset compatibility gates
+
+- [ ] Resolve Gate B's Lift coordinate reference and choose model revision or
+      Gazebo-specific V2 profiles.
+- [ ] Freeze the Lift simulation calibration/profile identity and propagation.
+- [ ] Generate and validate Gate C's UR geometry manifest.
+- [ ] Define Gate D's floor-frame projection and placement evidence IDs.
+- [ ] Define Gate E's subsystem/shared reset behavior.
+- [ ] Update affected service/Planner profiles and contract delivery state only
+      after owner approval.
+- [ ] Add parity tests that fail on profile/revision/transform mismatch.
+
+Acceptance:
+
+- No conversion depends on an unexplained scale, clamp, or offset.
+- All three V2 Lift targets selected for Gazebo are reachable by the chosen
+  model/profile.
+- Wrist, payload, Gemini, floor, map, and odom semantics are explicit.
+- Reset behavior does not silently change the MiR-only public resource.
+
+This task is a hard prerequisite for V2 Lift/lifecycle acceptance.
+
+### Task 3 — Add native integrated launch and scripts
+
+- [ ] Add `integrated_stack.launch.py` with rosbridge and optional Foxglove.
+- [ ] Apply the reviewed floor and UR frame manifests.
+- [ ] Keep perimeter/autonomous motion off by default.
+- [ ] Verify port conflicts and native host binding.
+- [ ] Add prerequisite, asset generation, build, run, and stop scripts with
+      bounded waits.
+- [ ] Implement only the reset mechanism approved in Task 2.
+
+Acceptance:
+
+- One native command starts a headless graph with fresh required topics/TF.
+- Startup causes no motion.
+- rosbridge is reachable from Docker's host gateway.
+- Shutdown sends best-effort zero Twist and ends boundedly.
+
+### Task 4 — Implement the isolated gateway
+
+- [ ] Add gateway package/container and injected rosbridge transport.
+- [ ] Implement health, readiness, capability, state, execution, cancel, and
+      approved reset resources.
+- [ ] Add bounded state caches and strict schema/freshness validation.
+- [ ] Add single active execution per subsystem.
+- [ ] Add measured completion/dwell and zero/hold behavior.
+- [ ] Add unit tests with a fake rosbridge; they must not require ROS.
+
+Acceptance:
+
+- Process health and ROS readiness are separate.
+- No endpoint moves a device before explicit start.
+- Missing/stale/profile-mismatched data never appears successful.
+- Connection loss cannot leave an unbounded velocity command without unknown
+  outcome evidence.
+
+### Task 5 — Add backend selection to MiR, UR, and Lift services
+
+- [ ] Add validated `SimulationBackend` to each service.
+- [ ] Preserve `deterministic` as default.
+- [ ] Require Gazebo URL/timeouts/freshness only for Gazebo.
+- [ ] Reject Gazebo outside simulation mode.
+- [ ] Construct adapters without network I/O.
+- [ ] Propagate backend/profile identity into readiness detail/evidence.
+- [ ] Test defaults, valid overrides, malformed/non-finite values,
+      contradictory modes, and final adapter construction.
+
+Acceptance:
+
+- Existing deterministic tests pass unchanged.
+- Default startup opens no gateway/ROS connection.
+- Gazebo configuration fails clearly when incomplete.
+- Gateway loss never triggers deterministic fallback.
+
+### Task 6 — Implement Gazebo-backed MiR
+
+- [ ] Add gateway client/adapter behind the existing MiR protocol.
+- [ ] Map fresh odometry into snapshot/readiness/viewer state.
+- [ ] Implement bounded differential-drive relative motion.
+- [ ] Implement completion, no-progress, timeout, cancellation, and restart
+      reconciliation.
+- [ ] Preserve command registry, actor, idempotency, and Orchestrator permits.
+- [ ] Map the approved floor projection into V2 placement evidence.
+- [ ] Keep non-normal scenarios deterministic-only initially.
+
+Acceptance:
+
+- Existing viewer/Orchestrator commands visibly move Gazebo MiR.
+- Viewer pose/trail and station placement evidence come from Gazebo odometry.
+- Completion requires measured pose and stop tolerance.
+- Cancellation/failure publishes zero velocity.
+- V2 station placement uses the existing MiR service client path.
+
+### Task 7 — Implement Gazebo-backed UR8L
+
+- [ ] Add gateway client/adapter behind existing UR protocols.
+- [ ] Resolve named presets from service-owned configuration.
+- [ ] Use six measured joints for execution status.
+- [ ] Derive wrist pose from TF and payload/Gemini poses from the reviewed
+      transform manifest.
+- [ ] Implement queue/start/status/cancel/reset reconciliation.
+- [ ] Detect unowned motion and profile/TF mismatch.
+- [ ] Preserve the read-only hardware RTDE path.
+
+Acceptance:
+
+- Existing named UR commands visibly move Gazebo UR8L.
+- Public state equals measured joints and wrist TF.
+- Payload geometry reports distinct wrist/payload/Gemini frames with current
+  profile/revision.
+- Completion waits for measured tolerance/dwell.
+- Cancellation holds measured joints and reports cancelled or unknown.
+
+### Task 8 — Implement Gazebo-backed LiftKit
+
+- [ ] Add gateway client/adapter behind V1 and V2 Lift protocols.
+- [ ] Implement reviewed coordinate conversion from Task 2.
+- [ ] Observe both physical stage joints.
+- [ ] Implement legacy preset and approved V2 profile commands.
+- [ ] Apply V2 tolerance, settling time, velocity, bounds, and freshness.
+- [ ] Preserve profile/calibration identity and absence reasons.
+- [ ] Detect inconsistent stages, out-of-range state, stale data, and unowned
+      motion.
+
+Acceptance:
+
+- Legacy presets visibly move Gazebo LiftKit.
+- Approved V2 profile commands reach their actual commanded coordinate.
+- Measured V2 evidence comes from Gazebo joint state.
+- The three-segment profile is either truthfully supported or explicitly
+  unavailable; no scaled synthetic success is allowed.
+- Hardware mode remains unchanged and unavailable.
+
+### Task 9 — Add the optional Compose topology
+
+- [ ] Add `compose.gazebo.yaml` and gateway container.
+- [ ] Add Linux host-gateway access.
+- [ ] Set Gazebo backend only on MiR, UR, and Lift.
+- [ ] Keep all other simulation providers deterministic.
+- [ ] Add a bounded preflight for rosbridge, topics, frames, and profile
+      revisions.
+- [ ] Verify UI/API remain available during native simulator outage.
+- [ ] Reject/document simultaneous Gazebo and hardware overlays.
+
+Acceptance:
+
+- Default and Gazebo Compose configurations validate.
+- Plain Compose requires no ROS.
+- Gazebo overlay selects exactly three device adapters.
+- Native outage reports stale/disconnected without fallback.
+- Restart requires explicit reconciliation before motion.
+
+### Task 10 — Integrate the existing V2 lifecycle
+
+- [ ] Run the existing three-station × three-segment lifecycle through the
+      Gazebo-backed services.
+- [ ] Verify MiR placement evidence is measured from Gazebo.
+- [ ] Verify Lift V2 evidence is measured from Gazebo after Task 2.
+- [ ] Keep deterministic surface/capture/inference/PLC evidence labelled as
+      such.
+- [ ] Do not claim waypoint UR execution; separately verify Gazebo UR named
+      commands and viewer geometry.
+- [ ] Preserve Orchestrator actor/idempotency persistence and completed-run
+      replay without re-actuation.
+- [ ] Test outage, unknown command, partial segment, restart, and wrong-owner
+      report behavior.
+- [ ] Consider replacing synthetic UR-stow/segment supervision providers only
+      through their owning service-backed contracts; do not embed ROS in the
+      Orchestrator.
+
+Acceptance:
+
+- `/v1/simulations/inspection-lifecycles` completes or explicitly blocks based
+  on real Gazebo device evidence.
+- V2 reports retain correct station, segment, profile, commanded/measured Lift,
+  and MiR placement evidence.
+- Replay returns persisted results and does not move Gazebo again.
+- Deterministic evidence remains distinguishable from Gazebo evidence.
+
+### Task 11 — Documentation, validation, and handoff
+
+- [ ] Update root README with both modes and exact prerequisites.
+- [ ] Update `PROJECT_PLANNING.md` contract/delivery state.
+- [ ] Update service READMEs for every new environment setting and backend.
+- [ ] Update `GLOSSARY.md` only if a new cross-service term is necessary.
+- [ ] Add host-compatible gateway/adapter tests to normal CI.
+- [ ] Add a separate native Ubuntu Gazebo test job when a suitable runner is
+      available.
+- [ ] Record versions, commands, timeouts, source SHAs, asset digests, profile
+      revisions, and unresolved assumptions.
+
+Acceptance:
+
+- A developer can run deterministic mode without reading Gazebo setup.
+- An Ubuntu developer can reach the Gazebo-backed V2 smoke from a clean
+  checkout.
+- CI distinguishes host-compatible, Compose, and native Gazebo tests.
+- Documentation never presents simulation evidence as commissioning.
+
+## Validation Matrix
+
+| Layer | Deterministic default | Gazebo opt-in |
+| --- | --- | --- |
+| Existing backend tests | required | required |
+| New adapter tests | fake deterministic transport | fake gateway |
+| Gateway tests | not started | required without ROS |
+| Default Compose config | required | required unchanged |
+| Gazebo Compose config | not used | required |
+| Hardware overlay config | required unchanged | must not be combined |
+| Native `colcon build/test` | not required | required |
+| Headless Gazebo launch | not required | required |
+| MiR evidence | deterministic world | odometry + TF |
+| UR evidence | deterministic interpolation | joint state + TF + profile parity |
+| Lift V1 evidence | deterministic presets | joint state |
+| Lift V2 evidence | deterministic profile state | reviewed coordinate + joint state |
+| V2 lifecycle | deterministic providers | mixed, with each source labelled |
+| Hardware access | forbidden | forbidden |
+
+Minimum monorepo checks after implementation:
+
+```bash
+cd backend
+uv sync --all-packages --group dev
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy packages/burke_contracts/src packages/burke_observability/src \
+  services/mir_service/src services/ur_service/src services/lift_service/src \
+  services/inspection_planner/src services/operational_supervision/src \
+  services/robot_orchestrator/src services/control_api/src
+
+cd ../frontend
+npm ci
+npm run typecheck
+npm run test
+npm run build
+
+cd ..
+docker compose config
+docker compose -f compose.yaml -f compose.gazebo.yaml config
+docker compose -f compose.yaml -f compose.hardware.yaml config
+```
+
+Native checks:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+cd simulation/gazebo/ros_ws
+colcon build --symlink-install
+source install/setup.bash
+colcon test
+colcon test-result --verbose
+ros2 launch burke_gazebo integrated_stack.launch.py gui:=false
+```
+
+Run the existing opt-in lifecycle merge gate against the Gazebo overlay after
+the stack reports ready:
+
+```bash
+cd backend
+BURKE_HOST_LIFECYCLE_SMOKE=1 \
+  uv run pytest services/robot_orchestrator/tests/test_host_lifecycle_smoke.py
+```
+
+All native tests need bounded startup, execution, and cleanup and must leave
+`/cmd_vel` at zero.
+
+## Stop-and-Ask Conditions
+
+Stop and ask the project owner if:
+
+- the implementation baseline is newer than `58caed59` and changes affected
+  contracts/profiles;
+- ROS or Gazebo would enter normal application-service images;
+- default Compose behavior would change;
+- raw CAD would be duplicated instead of using root `assets/`;
+- the Lift position reference remains undefined;
+- existing Lift V2 targets would need scaling, clamping, or a hidden offset;
+- supporting `1600 mm` requires unverified Lift geometry or joint changes;
+- UR wrist, payload, or Gemini transforms disagree with the service profile;
+- a transform would be relabelled without explicit frame/profile evidence;
+- MiR Planner-frame placement cannot be derived from a named floor projection;
+- shared reset would silently change MiR-only reset semantics;
+- a public contract must break rather than gain an explicit compatible field or
+  version;
+- Gazebo controller limits cannot truthfully satisfy a requested motion
+  profile;
+- collision-free planning is required for the first milestone;
+- the V2 lifecycle must physically move the UR through every waypoint;
+- deterministic Safe PLC or sensor evidence is being presented as Gazebo or
+  safety evidence;
+- command ownership, permits, idempotency, replay, or fail-closed behavior
+  would be weakened;
+- hardware credentials, private endpoints, or hardware control appear; or
+- standalone-repository deletion/archival is requested implicitly.
+
+## Completion Definition
+
+The integration is complete when:
+
+1. the monorepo contains the isolated native workspace under
+   `simulation/gazebo/` without duplicate raw CAD;
+2. default Compose remains fully deterministic and ROS-free;
+3. the Gazebo overlay selects MiR, UR, and Lift only;
+4. existing MiR and UR commands visibly move their Gazebo models and report
+   measured state through existing APIs;
+5. Lift V1 and the owner-approved V2 profiles move Gazebo LiftKit and return
+   truthful measured completion evidence;
+6. UR wrist/payload/Gemini and MiR floor-frame semantics match current
+   service-owned profiles;
+7. missing, stale, mismatched, or restarted Gazebo state fails closed without
+   deterministic fallback;
+8. the existing V2 lifecycle and report path consume measured Gazebo MiR/Lift
+   evidence while every remaining deterministic source stays labelled;
+9. completed lifecycle replay does not re-actuate Gazebo; and
+10. host, Compose, native, documentation, and handoff validation are current.
